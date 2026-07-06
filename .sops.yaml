@@ -9,6 +9,6 @@
 
 creation_rules:
   - path_regex: gitops/apps/.*/secrets/.*\.yaml$
-    age: age1REPLACE_WITH_YOUR_PUBLIC_KEY
+    age: age1ejlnhgwfnj7p5gxhvp8w0w52fg5n9k57xxzja2xqyneyu42ludyse4lfa6
   - path_regex: ansible/.*/secrets/.*\.yaml$
-    age: age1REPLACE_WITH_YOUR_PUBLIC_KEY
+    age: age1ejlnhgwfnj7p5gxhvp8w0w52fg5n9k57xxzja2xqyneyu42ludyse4lfa6
