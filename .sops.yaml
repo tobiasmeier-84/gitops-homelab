@@ -1,0 +1,14 @@
+# SOPS configuration.
+#
+# Replace the placeholder below with your actual age public key
+# (generate with: age-keygen -o age-key.txt — keep age-key.txt itself
+# OUT of this repo entirely; only the public key below is safe to commit).
+#
+# Files matching the path regexes below are encrypted with this key.
+# The corresponding private key must never be committed — see ADR-0004.
+
+creation_rules:
+  - path_regex: gitops/apps/.*/secrets/.*\.yaml$
+    age: age1REPLACE_WITH_YOUR_PUBLIC_KEY
+  - path_regex: ansible/.*/secrets/.*\.yaml$
+    age: age1REPLACE_WITH_YOUR_PUBLIC_KEY

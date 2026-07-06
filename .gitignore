@@ -1,0 +1,29 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+crash.*.log
+
+# Ansible
+*.retry
+.vault_pass
+
+# Secrets / key material — never commit these, regardless of SOPS
+*.agekey
+age-key.txt
+*.pem
+*.key
+!**/gitops/**/*.enc.yaml
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local scratch
+*.tmp
+/scratch/
