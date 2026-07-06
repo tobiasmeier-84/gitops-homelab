@@ -1,4 +1,4 @@
-# homelab-k8s
+# gitops-homelab
 
 A production-intent Kubernetes platform on a 3-node Proxmox home lab, built entirely as code: hypervisor provisioning, VM provisioning, cluster bootstrap, and every workload are all reconstructable from this repository alone.
 
