@@ -43,3 +43,13 @@ The single governing principle across every decision in this document: **if this
 | Security | Identity/SSO scope | Entra ID via native OIDC where supported | [0018](adr/0018-entraid-sso-integration-scope.md) |
 | Security | Auth for services without native OIDC | oauth2-proxy (Longhorn UI, Prometheus/Alertmanager, HAProxy stats) | [0019](adr/0019-oauth2-proxy-for-unauthenticated-services.md) |
 | Security | SSH access SSO | Accept risk (backlogged) — key-based access continues | [0020](adr/0020-ssh-entraid-backlogged.md) |
+| Cluster/GitOps | OpenTofu state backend | Self-hosted, bootstrapped first (breaks circular dependency) | [0024](adr/0024-self-hosted-opentofu-state-backend.md) |
+| Cluster/GitOps | Bootstrap ordering | Explicit documented first-boot sequence | [0025](adr/0025-bootstrap-ordering-runbook.md) |
+| Cluster/GitOps | Resource governance | Explicit requests/limits + per-namespace ResourceQuotas | [0026](adr/0026-resource-requests-limits-quotas.md) |
+| Cluster/GitOps | Dependency freshness | Renovate bot for Helm/image version updates | [0027](adr/0027-renovate-dependency-updates.md) |
+| Cluster/GitOps | Disaster-recovery validation | Full tested end-to-end DR runbook | [0023](adr/0023-tested-disaster-recovery-runbook.md) |
+| Backup | Backup consistency | Application-consistent (Longhorn freeze hooks) for DB volumes | [0022](adr/0022-application-consistent-backups.md) |
+| Observability | External availability check | Third-party dead-man's-switch heartbeat | [0028](adr/0028-external-dead-mans-switch.md) |
+| Observability | Certificate renewal monitoring | Explicit alert on renewal failure | [0029](adr/0029-cert-renewal-failure-alerting.md) |
+| Security | Authorization mapping | Entra ID groups \u2192 Kubernetes/ArgoCD/Harbor RBAC | [0021](adr/0021-entraid-group-authorization-mapping.md) |
+| Security | Image provenance | cosign signing + admission-controller enforcement | [0030](adr/0030-image-signing-admission-control.md) |
