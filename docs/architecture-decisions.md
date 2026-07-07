@@ -22,6 +22,7 @@ The single governing principle across every decision in this document: **if this
 | Network/Platform | DNS & certificate issuance | Include | [0007](adr/0007-dns-certs-cloudflare.md) |
 | Network/Platform | Container registry cache | Include — pull-through registry mirror | — |
 | Cluster/GitOps | Kubernetes distribution | RKE2 | [0001](adr/0001-why-rke2-over-k3s.md) |
+| Cluster/GitOps | Infrastructure-as-Code tool | OpenTofu over Terraform | [0010](adr/0010-opentofu-over-terraform.md) |
 | Cluster/GitOps | Storage | Longhorn | [0002](adr/0002-why-longhorn-over-ceph.md) |
 | Cluster/GitOps | GitOps delivery | ArgoCD, app-of-apps | [0003](adr/0003-argocd-app-of-apps.md) |
 | Cluster/GitOps | Secrets management | SOPS + age | [0004](adr/0004-sops-age-secrets.md) |

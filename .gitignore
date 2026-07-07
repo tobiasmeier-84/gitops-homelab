@@ -1,4 +1,4 @@
-# Terraform
+# OpenTofu (uses the same state/cache file formats as Terraform)
 **/.terraform/*
 *.tfstate
 *.tfstate.*

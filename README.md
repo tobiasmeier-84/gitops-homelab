@@ -13,7 +13,7 @@ If this repository and the credentials for the external providers it depends on 
 | Concern | Tool |
 |---|---|
 | Hypervisor | Proxmox VE (3 physical nodes), automated answer-file ISO install |
-| VM provisioning | Terraform (`bpg/proxmox` provider) |
+| VM provisioning | OpenTofu (`bpg/proxmox` provider) |
 | VM/OS configuration | Ansible |
 | Kubernetes distribution | RKE2 (3-node, combined control-plane + worker) |
 | Storage | Longhorn, replica count 3, dedicated per-node disks |
@@ -36,7 +36,7 @@ See [`docs/architecture-decisions.md`](docs/architecture-decisions.md) for the f
 │   ├── architecture-decisions.md   # full decision log
 │   ├── adr/                        # one file per significant decision
 │   └── runbooks/                   # operational procedures (e.g. node reinstall)
-├── terraform/
+├── opentofu/
 │   ├── modules/proxmox-vm/         # reusable VM provisioning module
 │   └── environments/prod/          # the actual 3-node RKE2 cluster's VMs
 ├── ansible/

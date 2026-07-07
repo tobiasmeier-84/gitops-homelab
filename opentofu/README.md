@@ -1,4 +1,4 @@
-# Terraform
+# OpenTofu
 
 Provisions the Proxmox VMs for the RKE2 cluster (`environments/prod/`), using the reusable `modules/proxmox-vm/` module. Uses the `bpg/proxmox` provider.
 
