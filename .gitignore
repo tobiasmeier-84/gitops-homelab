@@ -27,3 +27,6 @@ age-key.txt
 # Local scratch
 *.tmp
 /scratch/
+
+# Rendered Proxmox answer files — embed a root password hash, never commit
+proxmox-host/rendered/

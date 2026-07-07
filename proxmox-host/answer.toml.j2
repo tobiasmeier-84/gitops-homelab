@@ -1,0 +1,24 @@
+# Proxmox VE automated-install answer file template.
+# Rendered per-node by render.py using nodes.yaml + the SOPS-encrypted
+# root password hash. Do not commit rendered output (see .gitignore).
+
+[global]
+keyboard = "de-ch"
+country = "ch"
+fqdn = "{{ hostname }}.mgmt.homelab.internal"
+mailto = "admin@example.com"
+timezone = "Europe/Zurich"
+root-password-hashed = "{{ root_password_hash }}"
+reboot-on-error = false
+
+[network]
+source = "from-answer"
+cidr = "{{ mgmt_ip }}/24"
+gateway = "10.10.10.1"
+dns = "10.10.10.1"
+filter.ID_NET_NAME = "{{ mgmt_nic_name }}"
+
+[disk-setup]
+filesystem = "zfs"
+zfs.raid = "raid1"
+disk-list = ["{{ boot_disk_1 }}", "{{ boot_disk_2 }}"]

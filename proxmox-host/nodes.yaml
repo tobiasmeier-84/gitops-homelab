@@ -1,0 +1,22 @@
+# Per-node values for rendering answer.toml.j2.
+# Non-secret — the root password hash lives separately, SOPS-encrypted
+# (see secrets/root-password.enc.yaml), and is merged in at render time.
+
+nodes:
+  - hostname: pve1
+    mgmt_ip: 10.10.10.11
+    mgmt_nic_name: "eno1"
+    boot_disk_1: "/dev/disk/by-id/ata-MK000480GWUGF_20012720F219"
+    boot_disk_2: "/dev/disk/by-id/ata-MK000480GWUGF_20112704A634"
+
+  - hostname: pve2
+    mgmt_ip: 10.10.10.12
+    mgmt_nic_name: "eno1"
+    boot_disk_1: "/dev/disk/by-id/ata-VK0480GDJXV_PHWL526501RE480QGN"
+    boot_disk_2: "/dev/disk/by-id/ata-VK0480GDJXV_PHWL505503E1480QGN"
+
+  - hostname: pve3
+    mgmt_ip: 10.10.10.13
+    mgmt_nic_name: "eno1"
+    boot_disk_1: "/dev/disk/by-id/ata-VK0480GDJXV_PHWL5054005D480QGN"
+    boot_disk_2: "/dev/disk/by-id/ata-VK0480GDJXV_PHWL52650044480QGN"
