@@ -22,6 +22,7 @@ If this repository and the credentials for the external providers it depends on 
 | Ingress | ingress-nginx, fronted by existing HAProxy + VRRP VIP |
 | DNS / certificates | Cloudflare, cert-manager DNS-01, CronJob-based DDNS updater |
 | Container registry | Harbor (pull-through cache + vulnerability scanning) |
+| Identity / SSO | Microsoft Entra ID — native OIDC (Proxmox, Kubernetes API, ArgoCD, Grafana, Harbor, Nextcloud) + oauth2-proxy for services without native support |
 | Monitoring | kube-prometheus-stack (Prometheus, Grafana, Alertmanager) + Loki |
 | Backups | Dual-chain, cross-provider, per-run-encrypted PV backups (see ADR-0005) |
 | OS patching | Kured (automated cordon/drain/reboot/uncordon) |

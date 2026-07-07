@@ -40,3 +40,6 @@ The single governing principle across every decision in this document: **if this
 | Observability | Metrics/log retention | Include — explicit limits, sized to available disk | — |
 | Security | NetworkPolicies | Include — default-deny per namespace, explicit allows | — |
 | Security | Perimeter protection | CrowdSec over fail2ban | [0014](adr/0014-crowdsec-over-fail2ban.md) |
+| Security | Identity/SSO scope | Entra ID via native OIDC where supported | [0018](adr/0018-entraid-sso-integration-scope.md) |
+| Security | Auth for services without native OIDC | oauth2-proxy (Longhorn UI, Prometheus/Alertmanager, HAProxy stats) | [0019](adr/0019-oauth2-proxy-for-unauthenticated-services.md) |
+| Security | SSH access SSO | Accept risk (backlogged) — key-based access continues | [0020](adr/0020-ssh-entraid-backlogged.md) |
