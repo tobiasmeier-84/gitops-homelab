@@ -30,6 +30,7 @@ If this repository and the credentials for the external providers it depends on 
 | Authorization | Entra ID groups mapped to Kubernetes RBAC, ArgoCD RBAC, and Harbor project roles |
 | Image provenance | cosign signing, enforced via admission-controller policy |
 | Dependency freshness | Renovate bot for Helm chart and image version updates |
+| Network segmentation | 6 VLANs (MGMT/CLUSTER/STORAGE/DMZ-INGRESS/EGRESS + existing HOME), Cisco RV320 + HPE 1920/1950 |
 
 See [`docs/architecture-decisions.md`](docs/architecture-decisions.md) for the full decision log and [`docs/adr/`](docs/adr/) for individual, detailed ADRs.
 

@@ -53,3 +53,6 @@ The single governing principle across every decision in this document: **if this
 | Observability | Certificate renewal monitoring | Explicit alert on renewal failure | [0029](adr/0029-cert-renewal-failure-alerting.md) |
 | Security | Authorization mapping | Entra ID groups \u2192 Kubernetes/ArgoCD/Harbor RBAC | [0021](adr/0021-entraid-group-authorization-mapping.md) |
 | Security | Image provenance | cosign signing + admission-controller enforcement | [0030](adr/0030-image-signing-admission-control.md) |
+| Network/Platform | VLAN segmentation design | 6 VLANs (HOME/MGMT/CLUSTER/STORAGE/DMZ-INGRESS/EGRESS) | [0031](adr/0031-vlan-network-segmentation.md) |
+| Hardware | Perimeter firewall (RV320) | Accept EOL risk, backlog upgrade | [0032](adr/0032-rv320-eol-risk-accepted.md) |
+| Network/Platform | Network device config tracking | Out of IaC scope, manual GUI config only | [0033](adr/0033-network-device-config-out-of-iac-scope.md) |
