@@ -1,4 +1,4 @@
-# gitops-homelab
+# homelab-k8s
 
 A production-intent Kubernetes platform on a 3-node Proxmox home lab, built entirely as code: hypervisor provisioning, VM provisioning, cluster bootstrap, and every workload are all reconstructable from this repository alone.
 
@@ -21,6 +21,7 @@ If this repository and the credentials for the external providers it depends on 
 | Secrets | SOPS + age, decrypted at ArgoCD sync time |
 | Ingress | ingress-nginx, fronted by existing HAProxy + VRRP VIP |
 | DNS / certificates | Cloudflare, cert-manager DNS-01, CronJob-based DDNS updater |
+| Container registry | Harbor (pull-through cache + vulnerability scanning) |
 | Monitoring | kube-prometheus-stack (Prometheus, Grafana, Alertmanager) + Loki |
 | Backups | Dual-chain, cross-provider, per-run-encrypted PV backups (see ADR-0005) |
 | OS patching | Kured (automated cordon/drain/reboot/uncordon) |
@@ -51,7 +52,7 @@ See [`docs/architecture-decisions.md`](docs/architecture-decisions.md) for the f
 │   └── apps/                       # one folder per ArgoCD-managed workload
 ├── backup/
 │   └── image/                      # Dockerfile + script for the backup CronJob image
-└── .github/workflows/              # CI: terraform validate/plan, ansible-lint, kubeconform, image build
+└── .github/workflows/              # CI: tofu validate/plan, ansible-lint, kubeconform, image build
 ```
 
 ## Status

@@ -20,21 +20,23 @@ The single governing principle across every decision in this document: **if this
 | Hardware | Traffic segregation | Include — 10G for Longhorn/cluster, 1G for mgmt/ingress (VLAN-separated) | — |
 | Network/Platform | Time synchronization | Include — chrony on all nodes, router as NTP source | — |
 | Network/Platform | DNS & certificate issuance | Include | [0007](adr/0007-dns-certs-cloudflare.md) |
-| Network/Platform | Container registry cache | Include — pull-through registry mirror | — |
+| Network/Platform | Container registry cache | Harbor | [0017](adr/0017-harbor-over-plain-registry-mirror.md) |
 | Cluster/GitOps | Kubernetes distribution | RKE2 | [0001](adr/0001-why-rke2-over-k3s.md) |
-| Cluster/GitOps | Infrastructure-as-Code tool | OpenTofu over Terraform | [0010](adr/0010-opentofu-over-terraform.md) |
 | Cluster/GitOps | Storage | Longhorn | [0002](adr/0002-why-longhorn-over-ceph.md) |
-| Cluster/GitOps | GitOps delivery | ArgoCD, app-of-apps | [0003](adr/0003-argocd-app-of-apps.md) |
+| Cluster/GitOps | GitOps delivery | ArgoCD over Flux | [0003](adr/0003-argocd-app-of-apps.md), [0011](adr/0011-argocd-over-flux.md) |
 | Cluster/GitOps | Secrets management | SOPS + age | [0004](adr/0004-sops-age-secrets.md) |
+| Cluster/GitOps | Infrastructure-as-Code tool | OpenTofu over Terraform | [0010](adr/0010-opentofu-over-terraform.md) |
+| Cluster/GitOps | OpenTofu Proxmox provider | bpg/proxmox over telmate/proxmox | [0012](adr/0012-bpg-over-telmate-proxmox-provider.md) |
+| Cluster/GitOps | CNI | Canal over Cilium | [0013](adr/0013-canal-over-cilium.md) |
 | Cluster/GitOps | Reconstructability audit | Include — checklist run per app before onboarding | — |
 | Cluster/GitOps | Repository resilience | Include — mirrored to self-hosted Gitea/GitLab | — |
 | Cluster/GitOps | CI validation | Include — required checks before merge | — |
-| Cluster/GitOps | OS patch/reboot orchestration | Include — Kured | — |
+| Cluster/GitOps | OS patch/reboot orchestration | Kured over unattended-upgrades alone | [0015](adr/0015-kured-over-unattended-upgrades-alone.md) |
 | Backup | Backup design | Dual-chain, cross-provider, per-run encryption | [0005](adr/0005-backup-design.md) |
 | Backup | Backup orchestration | Kubernetes CronJob | [0006](adr/0006-backup-orchestration-cronjob.md) |
-| Observability | Monitoring stack | kube-prometheus-stack + Loki | — |
+| Observability | Monitoring stack | kube-prometheus-stack over VictoriaMetrics, + Loki | [0016](adr/0016-kube-prometheus-stack-over-victoriametrics.md) |
 | Observability | Backup failure/staleness alerting | Include | — |
 | Observability | Restore drills | Include — scheduled, automated | — |
 | Observability | Metrics/log retention | Include — explicit limits, sized to available disk | — |
 | Security | NetworkPolicies | Include — default-deny per namespace, explicit allows | — |
-| Security | Perimeter protection | Include — CrowdSec in front of HAProxy | — |
+| Security | Perimeter protection | CrowdSec over fail2ban | [0014](adr/0014-crowdsec-over-fail2ban.md) |
