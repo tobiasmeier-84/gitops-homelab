@@ -24,3 +24,6 @@ Designing segmentation before any host provisioning avoids retrofitting VLANs on
 
 ## Consequences
 Each RKE2 node requires interfaces on 4 VLANs (MGMT, CLUSTER, STORAGE, DMZ-INGRESS); EGRESS traffic may ride an existing interface via routing rather than requiring a 5th physical/tagged interface per node.
+
+## Addendum: Static addressing, no DHCP on tagged VLANs
+All tagged VLANs (10/20/30/40/50) use static IP assignment only, defined via OpenTofu/cloud-init and tracked in Ansible inventory — no DHCP server runs on these segments. Only VLAN 1 (HOME) retains DHCP, for its existing use case of arbitrary, unpredictable client devices. Each node's default route (0.0.0.0/0) is carried exclusively by its EGRESS interface; all other interfaces (MGMT, CLUSTER, STORAGE, DMZ-INGRESS) carry only local-subnet routes, with no gateway configured, to prevent asymmetric routing across the multiple NICs/VLANs each node participates in.
