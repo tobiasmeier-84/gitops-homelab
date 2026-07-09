@@ -5,9 +5,9 @@ the SOPS-decrypted root password hash. Output goes to rendered/<hostname>.toml
 — gitignored, never committed, since it embeds the (hashed) root credential.
 
 Usage:
-    pip install jinja2 pyyaml
-    sops -d secrets/root-password.enc.yaml > /tmp/root-password.plain.yaml
-    python3 render.py /tmp/root-password.plain.yaml
+    python3 -m pip install jinja2 pyyaml
+    sops -d proxmox-host/secrets/root-password.enc.yaml > /tmp/root-password.plain.yaml
+    python3 proxmox-host/render.py /tmp/root-password.plain.yaml
     rm /tmp/root-password.plain.yaml
 """
 import sys
