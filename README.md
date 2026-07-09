@@ -21,6 +21,7 @@ If this repository and the credentials for the external providers it depends on 
 | Secrets | SOPS + age, decrypted at ArgoCD sync time |
 | Ingress | ingress-nginx, fronted by existing HAProxy + VRRP VIP |
 | DNS / certificates | Cloudflare, cert-manager DNS-01, CronJob-based DDNS updater |
+| Naming convention | Belt objects (hosts), Stations (network), Saturn moons (VMs), Ships (workloads) — see ADR-0035 |
 | Container registry | Harbor (pull-through cache + vulnerability scanning) |
 | Identity / SSO | Microsoft Entra ID — native OIDC (Proxmox, Kubernetes API, ArgoCD, Grafana, Harbor, Nextcloud) + oauth2-proxy for services without native support |
 | Monitoring | kube-prometheus-stack (Prometheus, Grafana, Alertmanager) + Loki |
@@ -43,6 +44,11 @@ See [`docs/architecture-decisions.md`](docs/architecture-decisions.md) for the f
 │   ├── architecture-decisions.md   # full decision log
 │   ├── adr/                        # one file per significant decision
 │   └── runbooks/                   # operational procedures (e.g. node reinstall)
+├── proxmox-host/
+│   ├── answer.toml.j2               # PVE 9.2 automated-install answer file template
+│   ├── nodes.yaml                   # per-node values (ceres/eros/pallas)
+│   ├── secrets/                     # SOPS-encrypted root password hash
+│   └── render.py                    # renders per-node .toml from template + data
 ├── opentofu/
 │   ├── modules/proxmox-vm/         # reusable VM provisioning module
 │   └── environments/prod/          # the actual 3-node RKE2 cluster's VMs

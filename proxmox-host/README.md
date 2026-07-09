@@ -43,21 +43,21 @@ python3 render.py /tmp/root-password.plain.yaml
 rm /tmp/root-password.plain.yaml
 ```
 
-This writes `rendered/pve1.toml`, `rendered/pve2.toml`, `rendered/pve3.toml`
+This writes `rendered/ceres.toml`, `rendered/eros.toml`, `rendered/pallas.toml`
 — never committed (see repo `.gitignore`), since each embeds a password hash.
 
 ## Validating and building the bootable ISO (per node)
 
-```bash
-proxmox-auto-install-assistant validate rendered/pve1.toml
+​```bash
+proxmox-auto-install-assistant validate rendered/ceres.toml
 
-proxmox-auto-install-assistant prepare-iso proxmox-ve_8.x.iso \
+proxmox-auto-install-assistant prepare-iso proxmox-ve_9.2-1.iso \
   --fetch-from iso \
-  --answer-file rendered/pve1.toml \
-  --output pve1-auto.iso
-```
+  --answer-file rendered/ceres.toml \
+  --output ceres-auto.iso
+​```
 
-Repeat for `pve2` and `pve3` with their respective rendered files.
+Repeat for `eros` and `pallas` with their respective rendered files.
 
 ## What this does *not* configure
 
