@@ -33,6 +33,11 @@ The previously separate `mgmt.homelab.internal` domain (used in the Proxmox answ
 - **"Gate" over "Ring"** (the originally considered name) avoids reusing a singular, unique proper noun (there is only one Ring in the setting) as a generic category label for many different services.
 - **DNS-01 certificate issuance doesn't require public A records**, so even the fully internal-only tiers (`host`, `net`, `orbit`) can carry real, browser-trusted Let's Encrypt certificates rather than self-signed ones, despite never being resolvable outside the internal network.
 
+## Reserved for future use
+`proto.solsys.dev` is reserved for prototypes and experimental workloads (a deliberate double meaning: Protomolecule / prototype). Individual prototypes are named after Jupiter's moons (`europa.proto.solsys.dev`, `ganymede.proto.solsys.dev`, etc.) — Jupiter has 95 known moons, providing effectively unlimited headroom for however many prototypes accumulate over time.
+
+**Earth and Mars are reserved naming space with no assigned meaning yet.** No subdomain, environment, or architectural concept is mapped to either at this time — they're held in reserve for a future use not yet identified, rather than forced into a mapping now. Revisit when a concrete need arises (e.g. a genuine staging environment, a second physical site, or something not yet anticipated).
+
 ## Consequences
 - One `Certificate` resource with five wildcard SANs (`*.host`, `*.net`, `*.orbit`, `*.gate`, `*.app`, all `.solsys.dev`) covers every tier via a single DNS-01 validation flow.
 - The Proxmox answer-file template's `fqdn` field and `nodes.yaml` hostnames are updated to use `ceres`/`eros`/`pallas` on `host.solsys.dev`, replacing the earlier generic `pve1`/`pve2`/`pve3` placeholders and the retired `homelab.internal` domain.
