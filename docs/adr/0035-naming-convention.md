@@ -63,7 +63,9 @@ The previously separate `mgmt.homelab.internal` domain (used in the Proxmox answ
 
 ## Consequences
 
-- One `Certificate` resource with six wildcard SANs (`*.belt`, `*.station`, `*.orbit`, `*.gate`, `*.app`, `*.proto`, all `.solsys.dev`) covers every tier via a single DNS-01 validation flow.
+- **Certificate strategy differs by tier**, since ACME automation removes the operational-effort argument for wildcards, leaving only their downsides for public-facing services:
+- `belt.solsys.dev`, `station.solsys.dev`, `orbit.solsys.dev` (internal-only) use **wildcard certificates** — the Certificate Transparency log privacy benefit (hiding exact internal hostnames from public CT logs) is real here, and the usual wildcard blast-radius concern is already mitigated by VLAN segmentation (ADR-0031).
+- `gate.solsys.dev`, `app.solsys.dev`, `proto.solsys.dev` (public-facing) use **individual per-service certificates** via a `cert-manager.io/cluster-issuer` annotation per Ingress — smaller compromise/revocation blast radius, and no CT-log benefit to trade away since these hostnames are public by design regardless.
 - The Proxmox answer-file template's `fqdn` field and `nodes.yaml` hostnames use `ceres`/`eros`/`pallas` on `belt.solsys.dev`, replacing the earlier generic `pve1`/`pve2`/`pve3` placeholders and the retired `homelab.internal` domain.
 - Internal DNS (the home router/internal resolver) must be configured to resolve `*.belt.solsys.dev`, `*.station.solsys.dev`, and `*.orbit.solsys.dev` to internal IPs — these records deliberately do not exist in Cloudflare's public-facing zone.
 - Reassigning a ship name to a different workload later (e.g. if Donnager's role changes) is a documentation update only — no technical dependency is tied to the name itself.
