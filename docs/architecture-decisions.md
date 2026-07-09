@@ -57,3 +57,4 @@ The single governing principle across every decision in this document: **if this
 | Hardware | Perimeter firewall (RV320) | Accept EOL risk, backlog upgrade | [0032](adr/0032-rv320-eol-risk-accepted.md) |
 | Network/Platform | Network device config tracking | Out of IaC scope, manual GUI config only | [0033](adr/0033-network-device-config-out-of-iac-scope.md) |
 | Cluster/GitOps | Initial rebuild strategy | Greenfield full-cluster rebuild over rolling migration | [0034](adr/0034-greenfield-rebuild-over-rolling-migration.md) |
+| Network/Platform | Naming convention | Four thematic tiers (Belt/Stations/Saturn moons/Ships) under solsys.dev | [0035](adr/0035-naming-convention.md) |
