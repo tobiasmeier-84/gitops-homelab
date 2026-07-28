@@ -5,18 +5,18 @@
 nodes:
   - hostname: ceres
     mgmt_ip: 10.10.10.11
-    mgmt_nic_name: "eno1"
-    boot_disk_1: "/dev/disk/by-id/ata-MK000480GWUGF_20012720F219"
-    boot_disk_2: "/dev/disk/by-id/ata-MK000480GWUGF_20112704A634"
+    mmgmt_nic_mac_name: "enx9c8e994fac0e"   # from udevadm, not the plain 'eno1' name
+    boot_disk_1_serial: "MK000480GWUGF_20012720F219"
+    boot_disk_2_serial: "MK000480GWUGF_20112704A634"
 
   - hostname: eros
     mgmt_ip: 10.10.10.12
-    mgmt_nic_name: "eno1"
-    boot_disk_1: "/dev/disk/by-id/ata-VK0480GDJXV_PHWL526501RE480QGN"
-    boot_disk_2: "/dev/disk/by-id/ata-VK0480GDJXV_PHWL505503E1480QGN"
+    mgmt_nic_mac_name: "enx9c8e994fac0e"   # from udevadm, not the plain 'eno1' name
+    boot_disk_1_serial: "VK0480GDJXV_PHWL526501RE480QGN"
+    boot_disk_2_serial: "VK0480GDJXV_PHWL505503E1480QGN"
 
   - hostname: pallas
     mgmt_ip: 10.10.10.13
-    mgmt_nic_name: "eno1"
-    boot_disk_1: "/dev/disk/by-id/ata-VK0480GDJXV_PHWL5054005D480QGN"
-    boot_disk_2: "/dev/disk/by-id/ata-VK0480GDJXV_PHWL52650044480QGN"
+    mmgmt_nic_mac_name: "enx3c528265f161"
+    boot_disk_1_serial: "VK0480GDJXV_PHWL5054005D480QGN"
+    boot_disk_2_serial: "VK0480GDJXV_PHWL52650044480QGN"
