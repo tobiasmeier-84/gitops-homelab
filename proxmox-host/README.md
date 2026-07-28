@@ -46,6 +46,53 @@ rm /tmp/root-password.plain.yaml
 This writes `rendered/ceres.toml`, `rendered/eros.toml`, `rendered/pallas.toml`
 — never committed (see repo `.gitignore`), since each embeds a password hash.
 
+## Running proxmox-auto-install-assistant on macOS
+
+`proxmox-auto-install-assistant` is a Debian/Proxmox-packaged binary with no
+macOS build — it must run inside a Linux environment. The simplest option is
+a throwaway Docker container (requires Docker Desktop: `brew install --cask docker`):
+
+```bash
+docker run -it --rm --platform=linux/amd64 \
+  -v "$(pwd):/work" \
+  -v "$HOME/Downloads:/iso" \
+  -w /work debian:trixie bash -c '
+  apt-get update && apt-get install -y wget
+  mkdir -p /usr/share/keyrings
+  wget https://enterprise.proxmox.com/debian/proxmox-archive-keyring-trixie.gpg \
+    -O /usr/share/keyrings/proxmox-archive-keyring.gpg
+  echo "Types: deb
+URIs: http://download.proxmox.com/debian/pve
+Suites: trixie
+Components: pve-no-subscription
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg" > /etc/apt/sources.list.d/pve-install-repo.sources
+  apt-get update
+  apt-get install -y proxmox-auto-install-assistant
+  proxmox-auto-install-assistant prepare-iso /iso/proxmox-ve_9.2-1.iso \
+    --fetch-from iso \
+    --answer-file /work/proxmox-host/rendered/ceres.toml \
+    --output /work/ceres-auto.iso
+'
+```
+
+Notes:
+- `--platform=linux/amd64` is **required on Apple Silicon** — without it,
+  Docker pulls the arm64 image by default, `apt-get update` succeeds but
+  finds zero matching packages (Proxmox only publishes amd64), and you'll
+  hit `E: Unable to locate package proxmox-auto-install-assistant`.
+- The container mounts two host directories: the repo itself (`/work`) and
+  `~/Downloads` (`/iso`) — keeps the multi-GB ISO out of the git repo
+  entirely rather than requiring it to live inside the working directory.
+  Adjust the `/iso/proxmox-ve_9.2-1.iso` filename to match whatever
+  `ls ~/Downloads/proxmox-ve*.iso` actually shows — point-release version
+  suffixes shift over time.
+- Repeat the full command (fresh container each time) for `eros.toml` and
+  `pallas.toml`, changing both the `--answer-file` and `--output` paths.
+  Running one interactive shell (`docker run -it --rm --platform=linux/amd64
+  -v "$(pwd):/work" -v "$HOME/Downloads:/iso" -w /work debian:trixie bash`)
+  and running all three `prepare-iso` invocations inside it avoids
+  reinstalling the package three times.
+
 ## Validating and building the bootable ISO (per node)
 
 ​```bash

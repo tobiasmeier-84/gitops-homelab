@@ -30,3 +30,6 @@ age-key.txt
 
 # Rendered Proxmox answer files — embed a root password hash, never commit
 proxmox-host/rendered/
+
+# ISOs — never belong in git regardless of where they're downloaded to
+*.iso
