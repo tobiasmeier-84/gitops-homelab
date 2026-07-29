@@ -6,7 +6,7 @@
 All prior design work assumed a flat network. Before any host provisioning begins, traffic classes identified across earlier decisions (Proxmox management, Kubernetes cluster traffic, Longhorn storage replication, client-facing ingress, backup/DDNS egress) need physical/logical isolation from each other and from the existing home LAN.
 
 ## Decision
-Six VLANs, enforced via a Cisco RV320 (firewall/routing) and HPE 1920/1950 managed switches (802.1Q trunking):
+Six VLANs, enforced via a Cisco RV320 (firewall/routing) and HPE 5130 managed switches (802.1Q trunking):
 
 | VLAN ID | Name | Purpose | IP range | NIC mapping |
 |---|---|---|---|---|

@@ -12,7 +12,7 @@ A consistent naming scheme was wanted across every layer of the platform: physic
 | Layer | Theme | Items |
 |---|---|---|
 | Physical compute (Proxmox hosts) | Belt objects (real minor planets/asteroids) | `ceres`, `eros`, `pallas` |
-| Network devices | Constructed stations | firewall (RV320) → `tycho`; switches (HPE 1920/1950) → `medina` |
+| Network devices | Constructed stations | firewall (RV320) → `tycho`; switch 1 (HPE 5130) → `medina`; switch 2 (HPE5130) → `anderson` |
 | Virtual layer (VMs) | Saturn moons | HAProxy VM → `titan`; RKE2 nodes → `enceladus`, `mimas`, `rhea`; future VMs → `iapetus`, `dione`, etc. |
 | App/workload | Ships, subdivided by faction (see below) | see table |
 
