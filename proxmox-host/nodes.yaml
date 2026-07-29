@@ -5,18 +5,18 @@
 nodes:
   - hostname: ceres
     mgmt_ip: 10.10.10.11
-    mmgmt_nic_mac_name: "enx9c8e994fac0e"   # from udevadm, not the plain 'eno1' name
-    boot_disk_1_serial: "MK000480GWUGF_20012720F219"
-    boot_disk_2_serial: "MK000480GWUGF_20112704A634"
+    mgmt_nic_mac_name: "enx9c8e994fac0e"   # from udevadm, not the plain 'eno1' name
+    boot_disk_1: "sda"
+    boot_disk_2: "sdb"
 
   - hostname: eros
     mgmt_ip: 10.10.10.12
     mgmt_nic_mac_name: "enx9c8e994fac0e"   # from udevadm, not the plain 'eno1' name
-    boot_disk_1_serial: "VK0480GDJXV_PHWL526501RE480QGN"
-    boot_disk_2_serial: "VK0480GDJXV_PHWL505503E1480QGN"
+    boot_disk_1: "sda"
+    boot_disk_2: "sdb"
 
   - hostname: pallas
     mgmt_ip: 10.10.10.13
-    mmgmt_nic_mac_name: "enx3c528265f161"
-    boot_disk_1_serial: "VK0480GDJXV_PHWL5054005D480QGN"
-    boot_disk_2_serial: "VK0480GDJXV_PHWL52650044480QGN"
+    mgmt_nic_mac_name: "enx3c528265f161"
+    boot_disk_1: "sda"
+    boot_disk_2: "sdb"

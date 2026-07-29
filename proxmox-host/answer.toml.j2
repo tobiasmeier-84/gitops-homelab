@@ -21,4 +21,4 @@ filter.ID_NET_NAME_MAC = "{{ mgmt_nic_mac_name }}"
 [disk-setup]
 filesystem = "zfs"
 zfs.raid = "raid1"
-filter.ID_SERIAL = ["{{ boot_disk_1_serial }}", "{{ boot_disk_2_serial }}"]
+disk-list = ["{{ boot_disk_1 }}", "{{ boot_disk_2 }}"]

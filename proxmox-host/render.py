@@ -30,7 +30,7 @@ def main():
     out_dir.mkdir(exist_ok=True)
 
     for node in nodes:
-        if node["mgmt_nic_name"].startswith("REPLACE_ME") or node["boot_disk_1"].startswith("REPLACE_ME"):
+        if node["mgmt_nic_mac_name"].startswith("REPLACE_ME") or node["boot_disk_1"].startswith("REPLACE_ME"):
             print(f"Skipping {node['hostname']}: nodes.yaml still has REPLACE_ME placeholders.")
             continue
         rendered = template.render(**node, root_password_hash=root_password_hash)
