@@ -46,11 +46,62 @@ rm /tmp/root-password.plain.yaml
 This writes `rendered/ceres.toml`, `rendered/eros.toml`, `rendered/pallas.toml`
 — never committed (see repo `.gitignore`), since each embeds a password hash.
 
-## Running proxmox-auto-install-assistant on macOS
+## Determining disk and NIC values — do this in the actual install boot session
 
-`proxmox-auto-install-assistant` is a Debian/Proxmox-packaged binary with no
-macOS build — it must run inside a Linux environment. The simplest option is
-a throwaway Docker container (requires Docker Desktop: `brew install --cask docker`):
+Both the disk and network filters need values gathered from the **exact same
+boot session** as the install itself — not a prior live-boot check — since
+this is what makes bare disk names like `sda`/`sdb` safe to use despite
+normally being considered unstable.
+
+**Disks**: from the installer's debug shell (`Ctrl+Alt+F2` or `F3`):
+```bash
+ls -l /dev/disk/by-id/ | grep <model-number-or-known-identifier>
+```
+This maps each disk's stable serial-based identifier to its current `sdX`
+name for this boot. Use the `sdX` names (not the full `by-id` path) in
+`nodes.yaml`.
+
+**Network**: from the same shell:
+```bash
+udevadm info /sys/class/net/eno1 | grep ID_NET_NAME_MAC
+```
+Use the full value after the `=` (e.g. `enx9c8e994fac0e`) — not the plain
+interface name.
+
+**Alternative if you want zero ambiguity**: physically disconnect every disk
+except the 2 intended for the boot mirror before starting the install. With
+only `sda`/`sdb` present, there's no possible confusion — reconnect the rest
+once the OS install completes (they aren't needed until the Longhorn setup
+step, much later).
+
+## Validating the answer file — always do this before building an ISO
+
+```bash
+docker run -it --rm --platform=linux/amd64 \
+  -v "$(pwd):/work" \
+  -w /work debian:trixie bash -c '
+  apt-get update && apt-get install -y wget
+  mkdir -p /usr/share/keyrings
+  wget https://enterprise.proxmox.com/debian/proxmox-archive-keyring-trixie.gpg \
+    -O /usr/share/keyrings/proxmox-archive-keyring.gpg
+  echo "Types: deb
+URIs: http://download.proxmox.com/debian/pve
+Suites: trixie
+Components: pve-no-subscription
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg" > /etc/apt/sources.list.d/pve-install-repo.sources
+  apt-get update
+  apt-get install -y proxmox-auto-install-assistant
+  proxmox-auto-install-assistant validate-answer /work/proxmox-host/rendered/pallas.toml
+'
+```
+
+**Important**: `validate-answer` only checks TOML syntax and schema shape —
+it cannot confirm that disk/NIC values actually exist on real hardware. A
+clean pass here does not guarantee the install will find matching devices;
+it only rules out structural/syntax mistakes (see Troubleshooting below for
+the class of error this doesn't catch).
+
+## Building the bootable ISO (per node)
 
 ```bash
 docker run -it --rm --platform=linux/amd64 \
@@ -70,41 +121,48 @@ Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg" > /etc/apt/sources.l
   apt-get install -y proxmox-auto-install-assistant
   proxmox-auto-install-assistant prepare-iso /iso/proxmox-ve_9.2-1.iso \
     --fetch-from iso \
-    --answer-file /work/proxmox-host/rendered/ceres.toml \
-    --output /work/ceres-auto.iso
+    --answer-file /work/proxmox-host/rendered/pallas.toml \
+    --output /work/pallas-auto.iso
 '
 ```
 
-Notes:
-- `--platform=linux/amd64` is **required on Apple Silicon** — without it,
-  Docker pulls the arm64 image by default, `apt-get update` succeeds but
-  finds zero matching packages (Proxmox only publishes amd64), and you'll
-  hit `E: Unable to locate package proxmox-auto-install-assistant`.
-- The container mounts two host directories: the repo itself (`/work`) and
-  `~/Downloads` (`/iso`) — keeps the multi-GB ISO out of the git repo
-  entirely rather than requiring it to live inside the working directory.
-  Adjust the `/iso/proxmox-ve_9.2-1.iso` filename to match whatever
-  `ls ~/Downloads/proxmox-ve*.iso` actually shows — point-release version
-  suffixes shift over time.
-- Repeat the full command (fresh container each time) for `eros.toml` and
-  `pallas.toml`, changing both the `--answer-file` and `--output` paths.
-  Running one interactive shell (`docker run -it --rm --platform=linux/amd64
-  -v "$(pwd):/work" -v "$HOME/Downloads:/iso" -w /work debian:trixie bash`)
-  and running all three `prepare-iso` invocations inside it avoids
-  reinstalling the package three times.
-
-## Validating and building the bootable ISO (per node)
-
-​```bash
-proxmox-auto-install-assistant validate rendered/ceres.toml
-
-proxmox-auto-install-assistant prepare-iso proxmox-ve_9.2-1.iso \
-  --fetch-from iso \
-  --answer-file rendered/ceres.toml \
-  --output ceres-auto.iso
-​```
-
+Reflash the USB with the resulting ISO:
+```bash
+diskutil list
+diskutil unmountDisk /dev/diskN
+sudo dd if=pallas-auto.iso of=/dev/rdiskN bs=4m
+```
 Repeat for `eros` and `pallas` with their respective rendered files.
+
+## Troubleshooting
+
+**"No disks found matching selection"** — the `disk-list`/`filter` values
+don't match any real device. Common causes, in order of likelihood:
+- Values were captured in a *different* boot session than the one failing
+  (kernel disk enumeration/naming can shift between boots).
+- SATA controller is in RAID/RST mode rather than AHCI (common on HP
+  business desktops) — disks won't expose standard `by-id` nodes at all in
+  this mode. Check BIOS (commonly Advanced → SATA Configuration) and switch
+  to AHCI.
+- Values were copied from a different node's `nodes.yaml` entry by mistake.
+
+**`filter.X = [...]` fails with "invalid type: sequence, expected a string"**
+— `filter` properties only accept a single string value each, never an
+array, regardless of the property. To match multiple specific disks, use
+`disk-list` instead (bare names like `"sda"`, `"sdb"`), not `filter`.
+
+**`filter.ID_NET_NAME` doesn't work** — this isn't a real udev property.
+Use `filter.ID_NET_NAME_MAC` (most stable — tied to the physical NIC, not
+its PCI slot or onboard position) instead.
+
+**Before assuming a value is wrong, verify what the installer will actually
+match**, directly on the real hardware:
+```bash
+proxmox-auto-install-assistant device-match disk ID_SERIAL='...'
+proxmox-auto-install-assistant device-match network ID_NET_NAME_MAC='...'
+```
+An empty result confirms a mismatch before you burn another build/reflash
+cycle.
 
 ## What this does *not* configure
 
