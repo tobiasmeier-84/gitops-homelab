@@ -41,13 +41,29 @@ wrong, `plan` will surface it before anything is actually created.
 ## One-time setup
 
 1. Create a dedicated, least-privilege Proxmox user + API token for OpenTofu
-   (don't reuse root):
+   (don't reuse root). Run on any node via SSH/console:
 ```bash
    pveum user add terraform@pve
    pveum aclmod / -user terraform@pve -role PVEAdmin   # or a narrower custom role
-   pveum user token add terraform@pve bootstrap
+   pveum user token add terraform@pve bootstrap --privsep 0
 ```
-   Save the resulting token — it's shown only once.
+   `--privsep 0` disables privilege separation for the token, so it inherits
+   `terraform@pve`'s permissions directly rather than needing a second,
+   separate ACL grant just for the token.
+
+   This prints the token's secret value **once, only** — copy it
+   immediately, it cannot be retrieved again. Output looks like:
+
+┌──────────────┬──────────────────────────────────────┐
+│ key │ value │
+├──────────────┼──────────────────────────────────────┤
+│ full-tokenid │ terraform@pve!bootstrap │
+│ value │ 12345678-abcd-1234-abcd-1234567890ab │
+└──────────────┴──────────────────────────────────────┘
+
+   Assemble the value needed for `pve_api_token` as
+   `<full-tokenid>=<value>`, e.g.:
+   `terraform@pve!bootstrap=12345678-abcd-1234-abcd-1234567890ab`
 
 2. Store it encrypted:
 ```bash
