@@ -1,0 +1,22 @@
+# Copy to terraform.tfvars and fill in real values, then COMMIT the result —
+# disk identifiers are hardware data, not secrets (same precedent as
+# proxmox-host/nodes.yaml). The actual secret (API token) is handled
+# separately via SOPS + TF_VAR_pve_api_token, never in this file.
+
+razorback_disk_id = {
+  ceres  = "REPLACE_ME"
+  eros   = "REPLACE_ME"
+  pallas = "REPLACE_ME"
+}
+
+tachi_disk_id = {
+  ceres  = "REPLACE_ME"
+  eros   = "REPLACE_ME"
+  pallas = "REPLACE_ME"
+}
+
+sata_disk_ids = {
+  ceres  = ["REPLACE_ME", "REPLACE_ME", "REPLACE_ME"]
+  eros   = ["REPLACE_ME", "REPLACE_ME", "REPLACE_ME"]
+  pallas = ["REPLACE_ME", "REPLACE_ME", "REPLACE_ME"]
+}
