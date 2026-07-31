@@ -38,8 +38,8 @@ fits in the overall bootstrap sequence (this is step one).
 
 ```bash
 pip install jinja2 pyyaml
-sops -d secrets/root-password.enc.yaml > /tmp/root-password.plain.yaml
-python3 render.py /tmp/root-password.plain.yaml
+sops -d proxmox-host/secrets/root-password.enc.yaml > /tmp/root-password.plain.yaml
+python3 proxmox-host/render.py /tmp/root-password.plain.yaml
 rm /tmp/root-password.plain.yaml
 ```
 
@@ -91,7 +91,7 @@ Components: pve-no-subscription
 Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg" > /etc/apt/sources.list.d/pve-install-repo.sources
   apt-get update
   apt-get install -y proxmox-auto-install-assistant
-  proxmox-auto-install-assistant validate-answer /work/proxmox-host/rendered/pallas.toml
+  proxmox-auto-install-assistant validate-answer /work/proxmox-host/rendered/ceres.toml
 '
 ```
 
@@ -121,16 +121,16 @@ Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg" > /etc/apt/sources.l
   apt-get install -y proxmox-auto-install-assistant
   proxmox-auto-install-assistant prepare-iso /iso/proxmox-ve_9.2-1.iso \
     --fetch-from iso \
-    --answer-file /work/proxmox-host/rendered/pallas.toml \
-    --output /work/pallas-auto.iso
+    --answer-file /work/proxmox-host/rendered/ceres.toml \
+    --output /work/ceres-auto.iso
 '
 ```
 
 Reflash the USB with the resulting ISO:
 ```bash
 diskutil list
-diskutil unmountDisk /dev/diskN
-sudo dd if=pallas-auto.iso of=/dev/rdiskN bs=4m
+diskutil unmountDisk /dev/disk4
+sudo dd if=ceres-auto.iso of=/dev/rdisk4 bs=4m
 ```
 Repeat for `eros` and `pallas` with their respective rendered files.
 

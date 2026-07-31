@@ -5,7 +5,7 @@
 nodes:
   - hostname: ceres
     mgmt_ip: 10.10.10.11
-    mgmt_nic_mac_name: "enx9c8e994fac0e"   # from udevadm, not the plain 'eno1' name
+    mgmt_nic_mac_name: "enx186024911664"
     boot_disk_1: "sda"
     boot_disk_2: "sdb"
 
