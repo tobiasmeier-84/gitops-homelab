@@ -28,16 +28,37 @@ at a time; there's no quorum to preserve.
 **This destroys the existing k3s study cluster with no preservation path —
 confirmed as an accepted, deliberate clean slate.**
 
+### 2.5. Identify physical NICs before VLAN assignment
+
+Run `proxmox-host/scripts/identify-nics.sh` on each node to confirm which
+interface name maps to which physical port and speed, before finalizing
+VLAN/bridge configuration on the non-MGMT NICs. Document the resulting
+mapping in `proxmox-host/nodes.yaml` (or a dedicated `network-mapping.yaml`)
+once confirmed — this becomes the source of truth for the Ansible `common`
+role's network configuration later. VLAN tagging on the non-MGMT interfaces
+can remain temporary/unfinished at this stage; only MGMT connectivity is
+required for cluster formation (Corosync runs over MGMT).
+
 ### 3. Form a brand-new Proxmox cluster
 
-From the first node:
-pvecm create <cluster-name>
-From the other two:
-pvecm add <ip-of-first-node>
+Cluster name: **belt** (matches the `belt.solsys.dev` subdomain tier
+representing this same group of hosts).
+
+From `ceres` (first node):
+
+pvecm create belt
+
+From `eros` and `pallas`:
+
+pvecm add 10.10.10.11
+
 
 ### 4. Confirm health
+
 pvecm status
-All 3 nodes should show healthy quorum before proceeding to OpenTofu.
+
+All 3 nodes should show healthy quorum, cluster name `belt`, before
+proceeding to OpenTofu.
 
 ### 5. Continue the normal bootstrap sequence
 
