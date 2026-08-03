@@ -17,6 +17,7 @@ age-key.txt
 *.pem
 *.key
 !**/gitops/**/*.enc.yaml
+.decrypted*
 
 # OS / editor
 .DS_Store
