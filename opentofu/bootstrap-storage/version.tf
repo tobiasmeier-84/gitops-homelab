@@ -4,7 +4,11 @@ terraform {
   required_providers {
     proxmox = {
       source  = "bpg/proxmox"
-      version = ">= 0.111.0"  # proxmox_virtual_environment_node_disk_zfs requires this or later
+      version = ">= 0.111.0"
+    }
+    null = {
+      source  = "hashicorp/null"
+      version = ">= 3.2.0"
     }
   }
 
@@ -16,5 +20,5 @@ terraform {
 provider "proxmox" {
   endpoint  = var.pve_api_endpoint
   api_token = var.pve_api_token
-  insecure  = false
+  insecure  = true  # Proxmox's default self-signed cert — TODO: switch to real cert via PVE's built-in ACME support
 }

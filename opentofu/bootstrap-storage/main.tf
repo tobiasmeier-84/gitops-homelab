@@ -1,38 +1,58 @@
-# ============================================================================
-# VERIFY BEFORE APPLYING: proxmox_virtual_environment_node_disk_zfs was added
-# in bpg/proxmox v0.111.0 (June 2026) — exact argument names below are a
-# best-effort draft, not confirmed against full provider documentation.
-# Check `tofu providers schema -json` or the live registry page for this
-# resource before running `tofu apply`. In particular: the exact raid_level
-# value for "striped, no redundancy" (used for "canterbury") and the
-# expected device identifier format both need confirming.
-# ============================================================================
-
-resource "proxmox_virtual_environment_node_disk_zfs" "razorback" {
+resource "proxmox_node_disk_zfs" "razorback" {
   for_each = toset(var.nodes)
 
-  node_name  = each.value
-  name       = "razorback"
-  raid_level = "single"                  # single disk, no redundancy — VM disk, not host boot; etcd quorum + Longhorn replication mitigate
-  devices    = [var.razorback_disk_id[each.value]]
+  node_name = each.value
+  name      = "razorback"
+  raidlevel = "single"
+  devices   = ["/dev/${var.razorback_disk_id[each.value]}"]
 }
 
-resource "proxmox_virtual_environment_node_disk_zfs" "tachi" {
+resource "proxmox_node_disk_zfs" "tachi" {
   for_each = toset(var.nodes)
 
-  node_name  = each.value
-  name       = "tachi"
-  raid_level = "single"                  # single disk, no redundancy — same rationale as razorback
-  devices    = [var.tachi_disk_id[each.value]]
+  node_name = each.value
+  name      = "tachi"
+  raidlevel = "single"
+  devices   = ["/dev/${var.tachi_disk_id[each.value]}"]
 }
 
-resource "proxmox_virtual_environment_node_disk_zfs" "canterbury" {
+# ============================================================================
+# CANTERBURY: raw zpool creation via SSH, bypassing Proxmox's own ZFS
+# creation API — that API's "single" raidlevel rejects more than 1 disk,
+# so a genuine multi-disk stripe (no redundancy, max capacity) isn't
+# reachable through proxmox_node_disk_zfs at all. Longhorn already
+# provides redundancy at the cluster level (see ADR-0002), so host-level
+# redundancy here (raidz1) would cost ~1/3 capacity for protection this
+# design doesn't need.
+#
+# TRADE-OFF: this is an imperative provisioner, not a declarative resource
+# — OpenTofu doesn't track its state the way it does proxmox_node_disk_zfs.
+# Requires: local ssh-agent running with a key authorized for root on each
+# node (same KeePassXC-backed SSH setup already in use elsewhere).
+#
+# The `zpool list ... || zpool create ...` pattern makes this idempotent —
+# safe to re-run `tofu apply` without erroring if the pool already exists.
+# ============================================================================
+resource "null_resource" "canterbury_zpool" {
   for_each = toset(var.nodes)
 
-  node_name  = each.value
-  name       = "canterbury"
-  raid_level = "single"                  # VERIFY: intent is striped/no-redundancy across all 3 disks — confirm correct value
-  devices    = var.sata_disk_ids[each.value]
+  triggers = {
+    node  = each.value
+    disks = join(",", var.sata_disk_ids[each.value])
+  }
+
+  connection {
+    type  = "ssh"
+    host  = "${each.value}.belt.solsys.dev"
+    user  = "root"
+    agent = true  # uses local ssh-agent (KeePassXC-loaded key), no key file referenced here
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "zpool list -H -o name | grep -qx canterbury || zpool create canterbury ${join(" ", [for d in var.sata_disk_ids[each.value] : "/dev/${d}"])}"
+    ]
+  }
 }
 
 resource "proxmox_storage_zfspool" "razorback" {
@@ -41,7 +61,7 @@ resource "proxmox_storage_zfspool" "razorback" {
   zfs_pool = "razorback"
   content  = ["images"]
 
-  depends_on = [proxmox_virtual_environment_node_disk_zfs.razorback]
+  depends_on = [proxmox_node_disk_zfs.razorback]
 }
 
 resource "proxmox_storage_zfspool" "tachi" {
@@ -50,7 +70,7 @@ resource "proxmox_storage_zfspool" "tachi" {
   zfs_pool = "tachi"
   content  = ["images"]
 
-  depends_on = [proxmox_virtual_environment_node_disk_zfs.tachi]
+  depends_on = [proxmox_node_disk_zfs.tachi]
 }
 
 resource "proxmox_storage_zfspool" "canterbury" {
@@ -59,5 +79,5 @@ resource "proxmox_storage_zfspool" "canterbury" {
   zfs_pool = "canterbury"
   content  = ["images"]
 
-  depends_on = [proxmox_virtual_environment_node_disk_zfs.canterbury]
+  depends_on = [null_resource.canterbury_zpool]
 }
