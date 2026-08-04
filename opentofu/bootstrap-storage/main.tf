@@ -81,3 +81,30 @@ resource "proxmox_storage_zfspool" "canterbury" {
 
   depends_on = [null_resource.canterbury_zpool]
 }
+
+# ============================================================================
+# Enables the 'snippets' and 'import' content types on each node's default
+# 'local' storage — required for cloud-init file uploads and cloud image
+# downloads (discovered while building bootstrap-minio). Not enabled by
+# default on a fresh Proxmox install.
+# ============================================================================
+resource "null_resource" "local_storage_content" {
+  for_each = toset(var.nodes)
+
+  triggers = {
+    node = each.value
+  }
+
+  connection {
+    type  = "ssh"
+    host  = "${each.value}.belt.solsys.dev"
+    user  = "root"
+    agent = true
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "pvesm set local --content iso,vztmpl,backup,snippets,import"
+    ]
+  }
+}
