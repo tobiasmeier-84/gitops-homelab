@@ -11,6 +11,26 @@ Creates the storage pools on all 3 Proxmox nodes, using OpenTofu natively:
   redundancy layer here would just waste capacity) — named for the ice
   hauler, fitting for bulk cargo storage
 
+## Why canterbury uses a provisioner instead of proxmox_node_disk_zfs
+
+Proxmox's own ZFS-creation API validates that `raidlevel = "single"` must
+have exactly 1 disk — it has no built-in option for a plain multi-disk
+stripe with zero redundancy. Since Longhorn already provides redundancy at
+the cluster level (ADR-0002), and this design deliberately avoids paying
+for host-level redundancy Longhorn makes unnecessary, `canterbury` is
+created via a raw `zpool create` over SSH (a `null_resource` +
+`remote-exec` provisioner) instead.
+
+**Requires a local ssh-agent with a key authorized for root on all 3
+nodes** — the same KeePassXC-backed SSH key setup already used for manual
+administration. Run `ssh-add -l` to confirm your agent has a key loaded
+before `tofu apply`.
+
+**Known limitation**: `tofu destroy` will not automatically tear down this
+raw zpool (no destroy-time provisioner is configured) — manual cleanup via
+`zpool destroy canterbury` on each node is required if this pool is ever
+meant to be fully removed, not just recreated.
+
 **Runs before the main `environments/prod` OpenTofu config** — VM
 provisioning there references these pool IDs for disk placement, so they
 must exist first. Same bootstrapping-order pattern as the state backend
@@ -38,32 +58,93 @@ Safe way to test without risking real infrastructure: run `tofu plan`
 (never `apply`) after filling in `terraform.tfvars` — if the format is
 wrong, `plan` will surface it before anything is actually created.
 
+## Prerequisite: SSH key for the canterbury provisioner
+
+The `null_resource.canterbury_zpool` provisioner connects to each node over
+SSH as `root` — this requires **key-based authentication already set up**
+before `tofu apply` runs. Without it, the provisioner hangs indefinitely
+retrying a connection it can never complete (password auth can't be
+answered interactively by OpenTofu), rather than failing with a clear error.
+
+### One-time setup
+
+1. Generate a dedicated key for this purpose — separate from your GitHub
+   key, since this is root access to physical infrastructure, a different
+   trust domain entirely:
+```bash
+   ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_pve -C "terraform-root@proxmox-nodes"
+```
+
+2. Copy the public key to each node's root account (uses password auth one
+   last time — the plaintext root password set during the answer-file setup,
+   e.g. from KeePass):
+```bash
+   ssh-copy-id -i ~/.ssh/id_ed25519_pve.pub root@ceres.belt.solsys.dev
+   ssh-copy-id -i ~/.ssh/id_ed25519_pve.pub root@eros.belt.solsys.dev
+   ssh-copy-id -i ~/.ssh/id_ed25519_pve.pub root@pallas.belt.solsys.dev
+```
+
+3. Load it into your agent and confirm:
+```bash
+   ssh-add ~/.ssh/id_ed25519_pve
+   ssh-add -l
+```
+
+4. Verify key-based auth works **before** involving OpenTofu at all:
+```bash
+   ssh root@ceres.belt.solsys.dev "echo connected"
+```
+   Should return instantly, no password prompt. If this hangs or prompts
+   for a password, fix that first — `tofu apply` will have the identical
+   problem, just less obviously.
+
+5. Store the private key (`~/.ssh/id_ed25519_pve`) in your password manager
+   (KeePass), same as the GitHub and age keys — arguably the most sensitive
+   credential in this entire build, given it's root access to the physical
+   hosts.
+
+### If `tofu apply` hangs anyway
+
+Confirm `ssh-add -l` still shows the key loaded (agents don't always persist
+keys across every new terminal session/reboot) before assuming something
+else is wrong.
+
 ## One-time setup
 
-1. Create a dedicated, least-privilege Proxmox user + API token for OpenTofu
-   (don't reuse root). Run on any node via SSH/console:
+1. Create a dedicated Proxmox user + API token for OpenTofu. **Note:**
+   `Sys.Modify` (required for ZFS/disk management) is not included in the
+   `PVEAdmin` role — this needs the full `Administrator` role instead, on
+   **both** the user and the token (a token's effective permissions can
+   never exceed its owning user's, regardless of the token's own ACL):
 ```bash
    pveum user add terraform@pve
-   pveum aclmod / -user terraform@pve -role PVEAdmin   # or a narrower custom role
+   pveum aclmod / -user terraform@pve -role Administrator
    pveum user token add terraform@pve bootstrap --privsep 0
+   pveum aclmod / -token 'terraform@pve!bootstrap' -role Administrator
 ```
-   `--privsep 0` disables privilege separation for the token, so it inherits
-   `terraform@pve`'s permissions directly rather than needing a second,
-   separate ACL grant just for the token.
+   Verify privilege separation actually took effect (this has silently
+   failed before — worth checking rather than assuming):
+```bash
+   pveum user token list terraform@pve
+```
+   The `privsep` column should show `0`. If it shows `1`, the token has no
+   permissions of its own regardless of the user's role — either recreate
+   it with `--privsep 0`, or explicitly grant the token role as shown above.
+
+   **Trade-off worth knowing**: this grants a fairly broad `Administrator`
+   role to a service account, wider than the originally intended narrow
+   scope, purely to satisfy one operation (`Sys.Modify` for disk creation).
+   A tighter custom role (`pveum role add`) scoped to exactly what's needed
+   is a reasonable hardening step later, not required to get started.
 
    This prints the token's secret value **once, only** — copy it
-   immediately, it cannot be retrieved again. Output looks like:
+   immediately. Assemble the value needed for `pve_api_token` as
+   `<full-tokenid>=<value>`, e.g.
+   `terraform@pve!bootstrap=12345678-abcd-1234-abcd-1234567890ab`.
 
-┌──────────────┬──────────────────────────────────────┐
-│ key │ value │
-├──────────────┼──────────────────────────────────────┤
-│ full-tokenid │ terraform@pve!bootstrap │
-│ value │ 12345678-abcd-1234-abcd-1234567890ab │
-└──────────────┴──────────────────────────────────────┘
-
-   Assemble the value needed for `pve_api_token` as
-   `<full-tokenid>=<value>`, e.g.:
-   `terraform@pve!bootstrap=12345678-abcd-1234-abcd-1234567890ab`
+   **Shell gotcha**: the `!` in the token ID triggers history expansion in
+   bash/zsh if typed directly into an interactive terminal. Run `set +H` to
+   disable this for the session, or wrap the value in single quotes.
 
 2. Store it encrypted:
 ```bash
