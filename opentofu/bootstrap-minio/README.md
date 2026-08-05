@@ -65,12 +65,12 @@ tofu apply
 
 1. Confirm MinIO is reachable:
    ​```bash
-   curl http://iapetus.orbit.solsys.dev:9000/minio/health/live
+   curl https://iapetus.orbit.solsys.dev:9000/minio/health/live
    ​```
 2. Create the state bucket:
    ​```bash
    brew install minio-mc
-   mc alias set homelab http://iapetus.orbit.solsys.dev:9000 <root_user> <root_password>
+   mc alias set homelab https://iapetus.orbit.solsys.dev:9000 <root_user> <root_password>
    mc mb homelab/opentofu-state
    ​```
 
@@ -81,7 +81,7 @@ Add to `bootstrap-storage/versions.tf`'s `terraform` block:
 backend "s3" {
   bucket                      = "opentofu-state"
   key                         = "bootstrap-storage/terraform.tfstate"
-  endpoint                    = "http://iapetus.orbit.solsys.dev:9000"
+  endpoint                    = "https://iapetus.orbit.solsys.dev:9000"
   region                      = "us-east-1"
   access_key                  = "<root_user>"
   secret_key                  = "<root_password>"

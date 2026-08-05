@@ -42,3 +42,9 @@ variable "b2_application_key" {
   type        = string
   sensitive   = true
 }
+
+variable "minio_cloudflare_api_token" {
+  description = "Dedicated Cloudflare API token for MinIO's certbot DNS-01 challenge (Zone:DNS:Edit + Zone:Zone:Read, solsys.dev only)"
+  type        = string
+  sensitive   = true
+}

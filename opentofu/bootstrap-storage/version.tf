@@ -19,7 +19,7 @@ terraform {
   backend "s3" {
     bucket                      = "opentofu-state"
     key                         = "bootstrap-storage/terraform.tfstate"
-    endpoint                    = "http://iapetus.orbit.solsys.dev:9000"
+    endpoint                    = "https://iapetus.orbit.solsys.dev:9000"
     region                      = "us-east-1"
     skip_credentials_validation = true
     skip_region_validation      = true

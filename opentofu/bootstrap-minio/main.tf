@@ -23,7 +23,7 @@ resource "proxmox_virtual_environment_vm" "iapetus" {
     datastore_id = "canterbury"
     size         = 40
     interface    = "scsi0"
-    import_from  = proxmox_virtual_environment_download_file.debian_cloud_image.id
+    import_from = proxmox_download_file.debian_cloud_image.id
   }
 
   serial_device {
@@ -71,12 +71,16 @@ resource "proxmox_virtual_environment_file" "cloud_init" {
   }
 }
 
-resource "proxmox_virtual_environment_download_file" "debian_cloud_image" {
+resource "proxmox_download_file" "debian_cloud_image" {
   node_name    = "ceres"
   content_type = "import"
   datastore_id = "local"
-  url          = "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2"
-  file_name    = "debian-12-generic-amd64.qcow2"
+  # Pinned to a specific dated snapshot rather than "latest" for
+  # reproducibility — "latest" caused an unexpected replace when Debian
+  # rolled the image forward mid-build. Bump this URL deliberately when
+  # you want a newer base image, rather than it happening silently.
+  url          = "https://cloud.debian.org/images/cloud/bookworm/20260805-2561/debian-12-generic-amd64-20260805-2561.qcow2"
+  file_name    = "debian-12-generic-amd64-20260805-2561.qcow2"
 }
 
 # ============================================================================
@@ -133,6 +137,42 @@ resource "null_resource" "state_backup_setup" {
       "sudo mc alias set homelab http://localhost:9000 '${var.minio_root_user}' '${var.minio_root_password}'",
       "sudo systemctl daemon-reload",
       "sudo systemctl enable --now state-backup.timer"
+    ]
+  }
+}
+
+# ============================================================================
+# MinIO TLS: certbot + Cloudflare DNS-01, placed at MinIO's expected
+# certs-dir, with a certbot renewal deploy-hook to keep it current.
+# minio-user has no home directory, so --certs-dir is set explicitly
+# rather than relying on the $HOME/.minio/certs default.
+# ============================================================================
+resource "null_resource" "minio_tls_setup" {
+  depends_on = [null_resource.state_backup_setup]
+
+  connection {
+    type  = "ssh"
+    host  = "iapetus.orbit.solsys.dev"
+    user  = "admin"
+    agent = true
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "sudo apt-get update && sudo apt-get install -y certbot python3-certbot-dns-cloudflare",
+      "sudo mkdir -p /etc/letsencrypt",
+      "sudo tee /etc/letsencrypt/cloudflare.ini > /dev/null <<'CF_EOF'\ndns_cloudflare_api_token = ${var.minio_cloudflare_api_token}\nCF_EOF",
+      "sudo chmod 600 /etc/letsencrypt/cloudflare.ini",
+      "sudo certbot certonly --dns-cloudflare --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini -d iapetus.orbit.solsys.dev -m admin@solsys.dev --agree-tos --non-interactive || true",
+      "sudo mkdir -p /etc/minio/certs",
+      "sudo cp /etc/letsencrypt/live/iapetus.orbit.solsys.dev/fullchain.pem /etc/minio/certs/public.crt",
+      "sudo cp /etc/letsencrypt/live/iapetus.orbit.solsys.dev/privkey.pem /etc/minio/certs/private.key",
+      "sudo chown -R minio-user:minio-user /etc/minio/certs",
+      "sudo chmod 600 /etc/minio/certs/private.key",
+      "sudo sed -i 's|MINIO_OPTS=\"--console-address :9001\"|MINIO_OPTS=\"--console-address :9001 --certs-dir /etc/minio/certs\"|' /etc/default/minio",
+      "sudo tee /etc/letsencrypt/renewal-hooks/deploy/minio-reload.sh > /dev/null <<'HOOK_EOF'\n#!/usr/bin/env bash\ncp /etc/letsencrypt/live/iapetus.orbit.solsys.dev/fullchain.pem /etc/minio/certs/public.crt\ncp /etc/letsencrypt/live/iapetus.orbit.solsys.dev/privkey.pem /etc/minio/certs/private.key\nchown -R minio-user:minio-user /etc/minio/certs\nHOOK_EOF",
+      "sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/minio-reload.sh",
+      "sudo systemctl restart minio"
     ]
   }
 }
