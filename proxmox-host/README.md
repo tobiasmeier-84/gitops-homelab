@@ -172,3 +172,67 @@ SSH/Ansible. The full VLAN-aware network configuration (bridges and tagged
 interfaces for CLUSTER, STORAGE, DMZ-INGRESS, EGRESS — see
 [ADR-0031](../docs/adr/0031-vlan-network-segmentation.md)) is applied
 afterward by Ansible's `common` role, not by this answer file.
+
+## Node certificates via ACME (Let's Encrypt + Cloudflare DNS-01)
+
+Replaces the default self-signed cert with a trusted one per node. See
+ADR-0037 for why this is per-node rather than a shared wildcard.
+
+### One-time setup (cluster-wide, run once from any node)
+
+1. Create a dedicated Cloudflare API token — **Zone:DNS:Edit** +
+   **Zone:Zone:Read**, scoped to the `solsys.dev` zone only.
+
+2. ​```bash
+   echo 'CF_Token="<token>"' > /root/cf-token.txt
+   chmod 600 /root/cf-token.txt
+   pvenode acme plugin add dns cftoken --api cf --data /root/cf-token.txt
+   pvenode acme plugin config cftoken   # verify
+   ​```
+
+3. Register accounts — **test with staging first** to avoid Let's
+   Encrypt's production rate limits while debugging:
+   ​```bash
+   pvenode acme account register default admin@solsys.dev
+   # choose "Let's Encrypt V2 Staging" when prompted
+   ​```
+   Once staging confirms the flow works end to end, register a
+   **separate, distinctly-named** production account — account names
+   can't be reused/overwritten:
+   ​```bash
+   pvenode acme account register production admin@solsys.dev \
+     --directory "https://acme-v02.api.letsencrypt.org/directory"
+   ​```
+
+### Per-node (repeat on `ceres`, `eros`, `pallas` individually)
+
+​```bash
+pvenode config set -acmedomain0 <node>.belt.solsys.dev,plugin=cftoken
+pvenode config set -acme account=production
+pvenode config get | grep -i acme    # confirm account=production BEFORE ordering
+pvenode acme cert order --force      # --force needed if a staging cert already exists
+​```
+
+### Verify
+
+​```bash
+openssl s_client -connect <node>.belt.solsys.dev:8006 -servername <node>.belt.solsys.dev </dev/null 2>/dev/null | openssl x509 -noout -issuer -dates
+​```
+Should show `Let's Encrypt` (no "STAGING" in the issuer CN).
+
+### Troubleshooting
+
+- **"ACME account config file 'default' already exists"** — account names
+  aren't reusable/overwritable. Register the production account under a
+  new, distinct name (e.g. `production`) rather than trying to reuse
+  `default`.
+- **"Custom certificate exists but 'force' is not set"** — expected when
+  re-ordering over an existing (e.g. staging) cert. Add `--force`.
+- **Still shows a staging cert after reordering** — the node's `acme
+  account` setting may not have actually switched. Always run `pvenode
+  config get | grep -i acme` to confirm `account=production` **before**
+  running `cert order --force`, not just after.
+- **Account registration and the Cloudflare plugin are cluster-wide**
+  (stored in `/etc/pve/priv/acme/`, shared cluster filesystem) — only
+  need to be set up once. The **domain** and **which account to use** are
+  node-level settings and must be configured on each node individually.
