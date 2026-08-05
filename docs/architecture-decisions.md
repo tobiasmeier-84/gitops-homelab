@@ -58,4 +58,5 @@ The single governing principle across every decision in this document: **if this
 | Network/Platform | Network device config tracking | Out of IaC scope, manual GUI config only | [0033](adr/0033-network-device-config-out-of-iac-scope.md) |
 | Cluster/GitOps | Initial rebuild strategy | Greenfield full-cluster rebuild over rolling migration | [0034](adr/0034-greenfield-rebuild-over-rolling-migration.md) |
 | Network/Platform | Naming convention | Four thematic tiers (Belt/Stations/Saturn moons/Ships) under solsys.dev | [0035](adr/0035-naming-convention.md) |
+| Backup | State bucket backup | Simple, single-copy (not full dual-chain) | [0036](adr/0036-state-bucket-backup.md) |
 | Network/Platform | Proxmox host certificates | Individual per-node Let's Encrypt certs, not wildcard | [0037](adr/0037-proxmox-host-certificates.md) |
