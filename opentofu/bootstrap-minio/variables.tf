@@ -25,3 +25,20 @@ variable "minio_root_password" {
   type        = string
   sensitive   = true
 }
+
+variable "state_backup_age_public_key" {
+  description = "Public age key state backups are encrypted to — private key generated once, stored in KeePass, never in this repo"
+  type        = string
+}
+
+variable "b2_key_id" {
+  description = "Backblaze B2 application key ID, for the state-backup rclone remote"
+  type        = string
+  sensitive   = true
+}
+
+variable "b2_application_key" {
+  description = "Backblaze B2 application key secret"
+  type        = string
+  sensitive   = true
+}

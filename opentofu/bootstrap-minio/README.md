@@ -147,3 +147,54 @@ this as a working first pass, encrypted backend credentials as a follow-up.
   3 separate keys (GitHub, Proxmox host root access, VM admin access).
   `ssh-add -l` before troubleshooting a "permission denied" is often
   faster than assuming something's actually broken.
+
+  ## State bucket backup (ADR-0036)
+
+A systemd timer on `iapetus` itself backs up the OpenTofu state bucket
+daily to Backblaze B2 — simple, single-copy, not the full dual-chain design
+used for application data (ADR-0005).
+
+### Prerequisites
+
+1. Dedicated age keypair:
+   ​```bash
+   age-keygen -o ~/state-backup-age-key.txt
+   ​```
+   Private key → KeePass. Public key → `terraform.tfvars` as
+   `state_backup_age_public_key` (fine to commit, not secret).
+
+2. Backblaze B2 credentials (Application Key scoped to a dedicated bucket
+   `homelab-opentofu-state-backup`):
+   ​```bash
+   sops secrets/state-backup-credentials.enc.yaml
+   ​```
+
+### Applying
+
+​```bash
+sops -d secrets/state-backup-credentials.enc.yaml > /tmp/b2-creds.yaml
+export TF_VAR_b2_key_id=$(yq '.b2_key_id' /tmp/b2-creds.yaml)
+export TF_VAR_b2_application_key=$(yq '.b2_application_key' /tmp/b2-creds.yaml)
+rm /tmp/b2-creds.yaml
+
+tofu plan
+tofu apply
+​```
+
+### Verifying
+
+​```bash
+ssh admin@iapetus.orbit.solsys.dev "sudo systemctl status state-backup.timer"
+ssh admin@iapetus.orbit.solsys.dev "sudo systemctl start state-backup.service"
+ssh admin@iapetus.orbit.solsys.dev "sudo journalctl -u state-backup.service -n 50"
+​```
+
+### Restoring, if ever needed
+
+​```bash
+rclone copy b2-state-backup:homelab-opentofu-state-backup/<file>.tar.zst.age .
+age -d -i ~/state-backup-age-key.txt -o restored.tar.zst <file>.tar.zst.age
+zstd -d restored.tar.zst -o restored.tar
+tar -xf restored.tar
+mc mirror ./opentofu-state homelab/opentofu-state
+​```

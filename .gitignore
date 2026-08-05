@@ -5,6 +5,7 @@
 *.tfvars
 !*.tfvars.example
 !opentofu/bootstrap-storage/terraform.tfvars
+!opentofu/bootstrap-minio/terraform.tfvars
 crash.log
 crash.*.log
 

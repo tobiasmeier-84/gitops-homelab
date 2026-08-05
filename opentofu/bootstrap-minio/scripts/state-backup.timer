@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily OpenTofu state bucket backup
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

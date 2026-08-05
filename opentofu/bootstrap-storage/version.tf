@@ -12,9 +12,20 @@ terraform {
     }
   }
 
-  # Local state deliberately, for this bootstrap config specifically —
-  # this runs before the self-hosted state backend (ADR-0024) exists.
-  # State file must never be committed — see repo .gitignore.
+# Remote state via the self-hosted MinIO instance (iapetus) — see ADR-0024.
+# Originally used local state during bootstrap, before iapetus existed;
+# migrated once iapetus was up and the state bucket created.
+
+  backend "s3" {
+    bucket                      = "opentofu-state"
+    key                         = "bootstrap-storage/terraform.tfstate"
+    endpoint                    = "http://iapetus.orbit.solsys.dev:9000"
+    region                      = "us-east-1"
+    skip_credentials_validation = true
+    skip_region_validation      = true
+    skip_metadata_api_check     = true
+    force_path_style            = true
+  }
 }
 
 provider "proxmox" {

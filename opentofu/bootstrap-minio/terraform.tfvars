@@ -1,0 +1,2 @@
+vm_ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFhui9rpzE4grszrhYvAyTgv/Bj++Fb88sRhxtPpKSZh admin@homelab-vms"
+state_backup_age_public_key = "age1esqrm2w93gde492a85gut93mk8e7wartktlgy6yf3gsk9t4v5ezs3n4ldk"
