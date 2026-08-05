@@ -236,3 +236,85 @@ Should show `Let's Encrypt` (no "STAGING" in the issuer CN).
   (stored in `/etc/pve/priv/acme/`, shared cluster filesystem) — only
   need to be set up once. The **domain** and **which account to use** are
   node-level settings and must be configured on each node individually.
+
+## Entra ID SSO (ADR-0039)
+
+Reuses the existing `toebel.ch` tenant with `solsys.dev` added as a
+verified custom domain — see ADR-0018 for the reasoning behind reusing
+one tenant rather than creating a separate one.
+
+### One-time setup
+
+1. **Add `solsys.dev` as a verified custom domain**: Entra ID → Custom
+   domain names → Add domain → add the TXT record it gives you to
+   Cloudflare → Verify.
+
+2. **Create the App Registration**:
+   - Entra ID → App registrations → New registration
+   - Supported account types: **single tenant** ("this organizational
+     directory only") — never multitenant or personal accounts for
+     infrastructure like this
+   - Redirect URIs (Web platform), one per node, no trailing slash:
+     `https://ceres.belt.solsys.dev:8006`,
+     `https://eros.belt.solsys.dev:8006`,
+     `https://pallas.belt.solsys.dev:8006`
+   - Certificates & secrets → New client secret → copy immediately
+   - Endpoints → copy the OpenID Connect metadata URL, strip the
+     trailing `/.well-known/openid-configuration` — the remainder is
+     your issuer URL (`https://login.microsoftonline.com/<tenant-id>/v2.0`)
+
+3. **Store the credentials**:
+   ​```bash
+   cd proxmox-host
+   sops secrets/entraid-oidc.enc.yaml
+   ​```
+   ​```yaml
+   client_id: "<application (client) ID>"
+   client_secret: "<the secret value>"
+   issuer_url: "https://login.microsoftonline.com/<tenant-id>/v2.0"
+   ​```
+
+4. **Configure the realm** (cluster-wide, run once):
+   ​```bash
+   pveum realm add entraid --type openid \
+     --issuer-url "https://login.microsoftonline.com/<tenant-id>/v2.0" \
+     --client-id "<application-id>" \
+     --client-key "<client-secret>" \
+     --username-claim preferred_username \
+     --autocreate 1
+   ​```
+   **Deliberately not set as the default realm** — PAM stays the
+   default/fallback until OIDC is fully proven reliable.
+
+5. **Grant access** — OIDC login alone creates a user object with zero
+   permissions; it does not grant any role:
+   ​```bash
+   pveum user list                              # find the auto-created <you>@entraid user
+   pveum aclmod / -user "<you>@entraid" -role Administrator
+   ​```
+   **Backlog item**: this is a direct per-user grant, not the group-based
+   mapping ADR-0021 specifies — see `docs/BACKLOG.md`.
+
+### Troubleshooting
+
+- **`Wide character in print` Perl warning** — almost always an invisible
+  non-ASCII character (smart quotes, zero-width spaces) that snuck in
+  when copying a value directly out of the Azure Portal UI. Check with:
+  ​```bash
+  echo -n "<value>" | od -c | grep -v '   '
+  ​```
+  Any `\M-`-prefixed bytes confirm a hidden character. Fix by pasting
+  through a plain-text editor (or a heredoc to a file) before reuse, not
+  directly from the browser into the terminal.
+
+- **`AADSTS700016: Application ... was not found in the directory ...`**
+  — the `client-id` and the tenant ID in `issuer-url` don't match, almost
+  always because the App Registration was created in a different Azure
+  tenant than intended. Check the App Registration's **Directory
+  (tenant) ID** on its Overview page against the tenant ID in your
+  issuer URL, and confirm which directory the Azure Portal was actually
+  showing when the app was created.
+
+- **Login succeeds but you have no permissions** — expected. OIDC
+  `autocreate` only creates the user object; authorization is a
+  completely separate step (see "Grant access" above).

@@ -61,3 +61,4 @@ The single governing principle across every decision in this document: **if this
 | Backup | State bucket backup | Simple, single-copy (not full dual-chain) | [0036](adr/0036-state-bucket-backup.md) |
 | Network/Platform | Proxmox host certificates | Individual per-node Let's Encrypt certs, not wildcard | [0037](adr/0037-proxmox-host-certificates.md) |
 | Cluster/GitOps | MinIO TLS | certbot + Cloudflare DNS-01, provisioned via OpenTofu | [0038](adr/0038-minio-tls.md) |
+| Security | Proxmox Entra ID OIDC | Single-tenant (toebel.ch), direct-grant auth interim | [0039](adr/0039-proxmox-entraid-oidc.md) |

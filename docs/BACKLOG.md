@@ -55,3 +55,13 @@ but each item was a conscious trade-off worth revisiting eventually.
 - **Earth / Mars naming space** — deliberately held in reserve with no
   assigned meaning, for a future use not yet identified (e.g. a genuine
   staging environment). ([ADR-0035](adr/0035-naming-convention.md))
+
+  - **Proxmox Entra ID group-based authorization** — currently the admin
+  user was granted `Administrator` directly
+  (`pveum aclmod / -user <user>@entraid -role Administrator`), not via a
+  group claim. Works, but doesn't scale — a second admin needs another
+  manual grant rather than just joining a group. Proper fix: configure a
+  groups claim in the Entra ID token, create a `pve-admins` security
+  group, and map that group to the Proxmox role instead.
+  ([ADR-0021](adr/0021-entraid-group-authorization-mapping.md),
+  [ADR-0039](adr/0039-proxmox-entraid-oidc.md))
