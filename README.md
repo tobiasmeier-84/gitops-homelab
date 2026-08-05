@@ -35,6 +35,7 @@ If this repository and the credentials for the external providers it depends on 
 | Naming convention | Belt objects (hosts), Stations (network), Saturn moons (VMs), Ships (workloads) — see ADR-0035 |
 
 See [`docs/architecture-decisions.md`](docs/architecture-decisions.md) for the full decision log and [`docs/adr/`](docs/adr/) for individual, detailed ADRs.
+See [`docs/BACKLOG.md`](docs/BACKLOG.md) for deliberately deferred items worth revisiting.
 
 ## Repository layout
 
