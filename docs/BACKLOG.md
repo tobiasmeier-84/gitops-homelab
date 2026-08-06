@@ -65,3 +65,22 @@ but each item was a conscious trade-off worth revisiting eventually.
   group, and map that group to the Proxmox role instead.
   ([ADR-0021](adr/0021-entraid-group-authorization-mapping.md),
   [ADR-0039](adr/0039-proxmox-entraid-oidc.md))
+
+  ## IaC retrofit — manual steps to bring under OpenTofu management
+
+Several early setup steps were done manually before we established the
+discipline of checking provider schemas before building. Retrofit list,
+worked through incrementally:
+
+- [x] Cloudflare DNS records — imported into OpenTofu management
+      (`opentofu/cloudflare/`)
+- [ ] Entra ID App Registration (`azuread` provider) — in progress
+- [ ] **Proxmox ACME config — check whether `bpg/proxmox` has native ACME
+      resources** (the changelog references ACME-related attributes,
+      never actually checked). Currently a manual `pveum`/SSH process
+      documented in `proxmox-host/README.md`. Explicitly flagged to not
+      be forgotten.
+- [ ] Backblaze B2 (bucket + application key) — official `Backblaze/b2`
+      provider confirmed to support this
+- [ ] Azure Key Vault — never actually built at all yet (ADR-0005 gap),
+      automatable via `azurerm` provider
