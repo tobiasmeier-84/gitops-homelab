@@ -66,7 +66,7 @@ but each item was a conscious trade-off worth revisiting eventually.
   ([ADR-0021](adr/0021-entraid-group-authorization-mapping.md),
   [ADR-0039](adr/0039-proxmox-entraid-oidc.md))
 
-  ## IaC retrofit — manual steps to bring under OpenTofu management
+## IaC retrofit — manual steps to bring under OpenTofu management
 
 Several early setup steps were done manually before we established the
 discipline of checking provider schemas before building. Retrofit list,
@@ -74,13 +74,39 @@ worked through incrementally:
 
 - [x] Cloudflare DNS records — imported into OpenTofu management
       (`opentofu/cloudflare/`)
-- [ ] Entra ID App Registration (`azuread` provider) — in progress
+- [x] Entra ID App Registration — imported (`opentofu/entraid/`); client
+      secret itself remains unmanaged (can't be read back via API)
+- [x] Backblaze B2 bucket — imported (`opentofu/backblaze/`)
+- [ ] **Backblaze B2 application key management** — the
+      `homelab-state-backup` key (in active use by `iapetus`'s backup
+      script) is not managed by OpenTofu. Same reasoning as the Entra ID
+      client secret: the actual secret value can't be read back via B2's
+      API once created, only metadata. Could still manage the key's
+      *shape* (capabilities, bucket restriction, name) via `b2_application_key`
+      even without capturing the live secret — worth doing for
+      documentation/drift-detection value, similar to the Entra ID
+      secret-rotation follow-up.
 - [ ] **Proxmox ACME config — check whether `bpg/proxmox` has native ACME
       resources** (the changelog references ACME-related attributes,
       never actually checked). Currently a manual `pveum`/SSH process
-      documented in `proxmox-host/README.md`. Explicitly flagged to not
-      be forgotten.
-- [ ] Backblaze B2 (bucket + application key) — official `Backblaze/b2`
-      provider confirmed to support this
+      documented in `proxmox-host/README.md`.
 - [ ] Azure Key Vault — never actually built at all yet (ADR-0005 gap),
       automatable via `azurerm` provider
+
+## Documentation updates needed after the IaC retrofit
+
+As each manual setup step gets retrofitted into OpenTofu, the
+**existing README documentation still describes the old manual process**
+and needs updating to match — otherwise the docs actively mislead anyone
+(including future us) trying to rebuild from scratch. Needs a pass over:
+
+- `opentofu/cloudflare/README.md` — doesn't exist yet; needs writing to
+  describe the actual DNS-record-import workflow
+- `opentofu/entraid/README.md` — doesn't exist yet; needs writing
+- `opentofu/backblaze/README.md` — doesn't exist yet; needs writing
+- `opentofu/bootstrap-minio/README.md` — still describes manually
+  creating the B2 bucket via the console; now contradicts the actual
+  OpenTofu-managed process in `opentofu/backblaze/`
+- `proxmox-host/README.md` — the Entra ID and ACME sections describe
+  manual `az`/`pveum` steps; the Entra ID App Registration piece is now
+  partially superseded by `opentofu/entraid/`
