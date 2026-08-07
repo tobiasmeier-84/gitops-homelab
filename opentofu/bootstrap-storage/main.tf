@@ -108,3 +108,22 @@ resource "null_resource" "local_storage_content" {
     ]
   }
 }
+
+resource "null_resource" "canterbury_autoexpand" {
+  for_each = toset(var.nodes)
+
+  depends_on = [null_resource.canterbury_zpool]
+
+  connection {
+    type  = "ssh"
+    host  = "${each.value}.belt.solsys.dev"
+    user  = "root"
+    agent = true
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "zpool set autoexpand=on canterbury"
+    ]
+  }
+}
