@@ -136,6 +136,7 @@ resource "null_resource" "state_backup_setup" {
       "sudo mv /tmp/state-backup.timer /etc/systemd/system/state-backup.timer",
       "echo '${var.state_backup_age_public_key}' | sudo tee /etc/state-backup/age-recipient.txt > /dev/null",
       "sudo tee /etc/state-backup/rclone.conf > /dev/null <<'RCLONE_EOF'\n[b2-state-backup]\ntype = b2\naccount = ${var.b2_key_id}\nkey = ${var.b2_application_key}\nRCLONE_EOF",
+      "sudo chown admin:admin /etc/state-backup/rclone.conf /etc/state-backup/age-recipient.txt",
       "sudo chmod 600 /etc/state-backup/rclone.conf /etc/state-backup/age-recipient.txt",
       "sudo apt-get update && sudo apt-get install -y curl age zstd unzip",
       "which mc >/dev/null || (curl -sL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc && sudo install /tmp/mc /usr/local/bin/mc)",
