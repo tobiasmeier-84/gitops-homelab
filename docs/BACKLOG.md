@@ -110,3 +110,14 @@ and needs updating to match — otherwise the docs actively mislead anyone
 - `proxmox-host/README.md` — the Entra ID and ACME sections describe
   manual `az`/`pveum` steps; the Entra ID App Registration piece is now
   partially superseded by `opentofu/entraid/`
+
+  - **`pallas`'s second 10G port (STORAGE) rejects its SFP+ module** —
+  `ixgbe` driver explicitly refuses to initialize `01:00.1`:
+  "failed to load because an unsupported SFP+ or QSFP module type was
+  detected." Port `.0` (CLUSTER, working) uses a different, supported
+  module. Fix: swap in a matching/genuine-Intel SFP+ transceiver
+  (preferred), or override via `allow_unsupported_sfp=1` module parameter
+  if a compatible module isn't available. **Blocks**: `pallas` can't
+  fully join the STORAGE VLAN until resolved — must be fixed before
+  Longhorn setup, since Longhorn needs STORAGE working identically on all
+  3 nodes.
