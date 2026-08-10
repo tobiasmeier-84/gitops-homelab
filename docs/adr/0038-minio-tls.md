@@ -19,3 +19,21 @@ Doing this by hand (as initially attempted) would mean the entire TLS setup sile
 - OpenTofu's `s3` backend endpoint (used by `bootstrap-storage` and future configs) updated from `http://` to `https://iapetus.orbit.solsys.dev:9000`.
 - Internal, same-VM traffic (the state-backup script's own `mc`/`rclone` calls, which use `localhost`) was left on HTTP — reasonable given it never leaves the VM, though noted as an inconsistency if full end-to-end TLS is ever desired.
 - A related, incidental fix made during this work: `opentofu/bootstrap-minio/main.tf`'s Debian cloud image download was pinned to a specific dated snapshot URL instead of tracking `latest`, after an unexpected image-size mismatch surfaced mid-session. Prevents a future `tofu apply` from silently picking up a different base image than what's actually running.
+
+## Correction (discovered later): MinIO has no HTTP fallback
+
+The original assumption that internal/loopback traffic could stay on
+plain HTTP was **incorrect**. Once `--certs-dir` is configured, MinIO
+serves HTTPS exclusively — there is no simultaneous HTTP listener, not
+even for `localhost`. Additionally, `localhost` itself doesn't work as a
+connection target regardless, since the certificate is issued for
+`iapetus.orbit.solsys.dev` specifically — TLS hostname verification
+correctly rejects a `localhost` connection even though it's the same
+machine.
+
+**Practical consequence discovered**: after a routine fix to the
+state-backup service's `User=` (root → admin), the backup started failing
+silently, because the `mc` alias was configured using `http://localhost:9000`
+— which had apparently never actually been exercised end-to-end since TLS
+was enabled. **All clients, including same-VM tools, must use
+`https://iapetus.orbit.solsys.dev:9000`.**

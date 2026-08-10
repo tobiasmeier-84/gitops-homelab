@@ -6,4 +6,4 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/opt/state-backup/state-backup.sh
-User=root
+User=admin

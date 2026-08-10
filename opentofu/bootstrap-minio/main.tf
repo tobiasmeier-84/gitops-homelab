@@ -99,6 +99,12 @@ resource "proxmox_download_file" "debian_cloud_image" {
 resource "null_resource" "state_backup_setup" {
   depends_on = [proxmox_virtual_environment_vm.iapetus]
 
+  triggers = {
+    script_hash  = filesha256("${path.module}/scripts/state-backup.sh")
+    service_hash = filesha256("${path.module}/scripts/state-backup.service")
+    timer_hash   = filesha256("${path.module}/scripts/state-backup.timer")
+  }
+
   connection {
     type  = "ssh"
     host  = "iapetus.orbit.solsys.dev"
@@ -134,7 +140,7 @@ resource "null_resource" "state_backup_setup" {
       "sudo apt-get update && sudo apt-get install -y curl age zstd unzip",
       "which mc >/dev/null || (curl -sL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc && sudo install /tmp/mc /usr/local/bin/mc)",
       "which rclone >/dev/null || (curl -sL https://rclone.org/install.sh | sudo bash)",
-      "sudo mc alias set homelab http://localhost:9000 '${var.minio_root_user}' '${var.minio_root_password}'",
+      "mc alias set homelab https://iapetus.orbit.solsys.dev:9000 '${var.minio_root_user}' '${var.minio_root_password}'",
       "sudo systemctl daemon-reload",
       "sudo systemctl enable --now state-backup.timer"
     ]

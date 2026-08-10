@@ -198,3 +198,13 @@ zstd -d restored.tar.zst -o restored.tar
 tar -xf restored.tar
 mc mirror ./opentofu-state homelab/opentofu-state
 ​```
+
+### Troubleshooting
+
+- **`tls: failed to verify certificate: x509: certificate is valid for
+  iapetus.orbit.solsys.dev, not localhost`** — never connect via
+  `localhost`; the certificate only covers the real hostname. Use
+  `https://iapetus.orbit.solsys.dev:9000` even for same-VM clients.
+- **`Client sent an HTTP request to an HTTPS server`** — MinIO has no
+  HTTP fallback once TLS is configured. Any `mc alias`/client config
+  still using `http://` needs updating to `https://`.
