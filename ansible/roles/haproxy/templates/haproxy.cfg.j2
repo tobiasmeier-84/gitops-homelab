@@ -1,0 +1,33 @@
+global
+    log /dev/log local0
+    maxconn 4096
+
+defaults
+    log global
+    mode http
+    timeout connect 5s
+    timeout client 30s
+    timeout server 30s
+
+frontend http_in
+    bind {{ vrrp_ip }}:80
+    default_backend rke2_ingress
+
+frontend https_in
+    bind {{ vrrp_ip }}:443
+    mode tcp
+    default_backend rke2_ingress_tls
+
+backend rke2_ingress
+    balance roundrobin
+    option httpchk GET /
+{% for node in groups['rke2_nodes'] %}
+    server {{ node }} {{ hostvars[node]['rke2_dmz_ingress_ip'] }}:80 check
+{% endfor %}
+
+backend rke2_ingress_tls
+    mode tcp
+    balance roundrobin
+{% for node in groups['rke2_nodes'] %}
+    server {{ node }} {{ hostvars[node]['rke2_dmz_ingress_ip'] }}:443 check
+{% endfor %}

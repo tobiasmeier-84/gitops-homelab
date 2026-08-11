@@ -1,0 +1,15 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: rke2-traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    service:
+      spec:
+        type: LoadBalancer
+    ports:
+      web:
+        hostPort: null
+      websecure:
+        hostPort: null

@@ -1,0 +1,3 @@
+---
+vrrp_ip: "10.10.40.10"
+vrrp_auth_pass: "solsys-vrrp"  # not a real secret — VRRP auth is weak by design, just prevents accidental cross-talk with unrelated VRRP instances on the same VLAN

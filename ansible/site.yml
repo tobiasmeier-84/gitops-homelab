@@ -10,3 +10,8 @@
   serial: 1
   roles:
     - rke2
+
+- name: Install HAProxy + keepalived VRRP trio
+  hosts: haproxy
+  roles:
+    - haproxy

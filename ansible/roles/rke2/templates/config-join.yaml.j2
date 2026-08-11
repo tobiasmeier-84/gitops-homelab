@@ -1,9 +1,11 @@
 token: {{ hostvars[groups['rke2_nodes'][0]]['rke2_cluster_token'] }}
 server: https://{{ hostvars[groups['rke2_nodes'][0]]['rke2_node_ip'] }}:9345
 node-ip: {{ rke2_node_ip }}
+node-external-ip: {{ rke2_dmz_ingress_ip }}
 tls-san:
   - {{ inventory_hostname }}.orbit.solsys.dev
   - {{ ansible_host }}
   - rke2-api.solsys.dev
 cni: canal
+enable-servicelb: true
 write-kubeconfig-mode: "0644"

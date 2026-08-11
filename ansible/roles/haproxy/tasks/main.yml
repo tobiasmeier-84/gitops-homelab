@@ -1,0 +1,38 @@
+---
+- name: Install HAProxy and keepalived
+  apt:
+    name:
+      - haproxy
+      - keepalived
+    state: present
+    update_cache: true
+
+- name: Deploy HAProxy config
+  template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    mode: '0644'
+  notify: restart haproxy
+
+- name: Deploy keepalived config
+  template:
+    src: keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+    mode: '0644'
+  notify: restart keepalived
+
+- name: Allow HAProxy to bind to the floating VRRP IP before it's locally present
+  sysctl:
+    name: net.ipv4.ip_nonlocal_bind
+    value: "1"
+    state: present
+    reload: true
+
+- name: Ensure HAProxy and keepalived are enabled and running
+  systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - haproxy
+    - keepalived
