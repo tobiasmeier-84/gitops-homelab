@@ -128,9 +128,7 @@ module "rhea" {
   network_interfaces = [
     { bridge = "vmbr0", address = "10.10.10.43/24" },
     { bridge = "vmbr1", address = "10.10.20.43/24" },
-    #{ bridge = "vmbr2", address = "10.10.30.43/24", mtu = 9000 },
-    # vmbr2 (STORAGE) omitted — bridge doesn't exist yet on pallas,
-    # pending SFP+ swap (see docs/BACKLOG.md). Add back once fixed.
+    { bridge = "vmbr2", address = "10.10.30.43/24", mtu = 9000 },
     { bridge = "vmbr3", address = "10.10.40.43/24" },
     { bridge = "vmbr4", address = "10.10.50.43/24", gateway = "10.10.50.1" },
   ]

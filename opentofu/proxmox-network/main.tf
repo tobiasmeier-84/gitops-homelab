@@ -48,7 +48,6 @@ locals {
       node = pair[0]
       key  = pair[1]
     }
-    if !(pair[0] == "pallas" && pair[1] == "storage")
   }
 }
 
@@ -79,7 +78,7 @@ resource "proxmox_network_linux_bridge" "node_bridges" {
 # once resolved.
 # ============================================================================
 resource "null_resource" "storage_interface_mtu" {
-  for_each = toset([for n in var.nodes : n if n != "pallas"])
+  for_each = toset(var.nodes)
 
   connection {
     type  = "ssh"

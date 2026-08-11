@@ -129,3 +129,9 @@ and needs updating to match — otherwise the docs actively mislead anyone
      exclusion from `node_bridge_pairs` and add `pallas` back to
      `null_resource.storage_interface_mtu`'s `for_each`
   4. `tofu plan` / `tofu apply`
+
+- [x] **RESOLVED** — `pallas`'s STORAGE port had a defective transceiver
+    (blank Ordering Name, non-standard reported distance). Replaced
+    with a genuine Intel-branded DAC (`821-24-071-02`), confirmed
+    working via kernel probe, switch MAC table, and live traffic.
+    `vmbr2`/MTU 9000/`rhea`'s STORAGE NIC all completed.
