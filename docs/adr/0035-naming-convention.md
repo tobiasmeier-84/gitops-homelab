@@ -12,8 +12,8 @@ A consistent naming scheme was wanted across every layer of the platform: physic
 | Layer | Theme | Items |
 |---|---|---|
 | Physical compute (Proxmox hosts) | Belt objects (real minor planets/asteroids) | `ceres`, `eros`, `pallas` |
-| Network devices | Constructed stations | firewall (RV320) → `tycho`; switch 1 (HPE 5130) → `medina`; switch 2 (HPE5130) → `anderson`; UPS network card (NUT) → `baragaon` |
-| Virtual layer (VMs) | Saturn moons | HAProxy VM → `titan`; RKE2 nodes → `enceladus`, `mimas`, `rhea`; future VMs → `iapetus`, `dione`, etc. |
+| Network devices | Constructed stations | firewall (RV320) → `tycho`; switches (HPE 5130) → `medina`, `anderson`; UPS → `baragaon` |
+| Virtual layer (VMs) | Saturn moons | RKE2 nodes → `enceladus`, `mimas`, `rhea`; MinIO → `iapetus` |
 | App/workload | Ships, subdivided by faction (see below) | see table |
 
 ### App/workload ships, subdivided by faction
@@ -35,12 +35,14 @@ Ship faction reflects each workload's actual function, not arbitrary assignment:
 ### Subdomain structure
 
 All under `solsys.dev`. Internal-only tiers use split-horizon DNS (resolved only by the internal resolver, never published in Cloudflare's public zone) but can still carry real, browser-trusted certificates, since DNS-01 validation only requires a public `TXT` record, never a public `A` record:
-belt.solsys.dev     — physical Proxmox hosts (internal only)         e.g. ceres.belt.solsys.dev
-station.solsys.dev  — network devices (internal only)                e.g. tycho.station.solsys.dev
-orbit.solsys.dev    — virtual layer VMs (internal only)               e.g. titan.orbit.solsys.dev
-gate.solsys.dev     — app/workload layer, thematic hostname (public, primary)   e.g. rocinante.gate.solsys.dev
-app.solsys.dev      — app/workload layer, functional hostname (public, alias)   e.g. nextcloud.app.solsys.dev
-proto.solsys.dev    — prototypes (see below)
+
+belt.solsys.dev — physical Proxmox hosts (internal only) e.g. ceres.belt.solsys.dev
+station.solsys.dev — network devices (internal only) e.g. tycho.station.solsys.dev
+orbit.solsys.dev — virtual layer VMs (internal only) e.g. titan.orbit.solsys.dev
+gate.solsys.dev — app/workload layer, thematic hostname (public, primary) e.g. rocinante.gate.solsys.dev
+app.solsys.dev — app/workload layer, functional hostname (public, alias) e.g. nextcloud.app.solsys.dev
+proto.solsys.dev — prototypes (see below)
+
 
 Each app-tier service gets both a thematic (`gate`) and functional (`app`) public hostname pointing at the same backend.
 
@@ -52,6 +54,17 @@ The previously separate `mgmt.homelab.internal` domain (used in the Proxmox answ
 
 **Earth and Mars are reserved naming space with no assigned meaning yet.** No subdomain, environment, or architectural concept is mapped to either at this time — held in reserve for a future use not yet identified, rather than forced into a mapping now. Revisit when a concrete need arises (e.g. a genuine staging environment, a second physical site, or something not yet anticipated).
 
+## Amendment: HAProxy trio renamed to Neptune moons
+
+The HAProxy VRRP trio (originally planned as a single `titan` VM, later decided to be 3x VRRP-replicated to match the existing production setup's HA pattern) is renamed to Neptune's moons — `triton`, `nereid`, `proteus` — rather than continuing the general Saturn-moons VM theme. Reasoning: Neptune is the outermost planet in the solar system, making its moons a fitting metaphor for the literal entry point into this platform — all external traffic passes through this trio first, just as Neptune's moons sit at the system's edge. `titan` is retired from this role entirely (rather than mixed with the new theme); Saturn moons remain the theme for all other VMs.
+
+Addressing:
+- MGMT (own address per instance): `triton`=10.10.10.31, `nereid`=10.10.10.32, `proteus`=10.10.10.33
+- DMZ-INGRESS (own address per instance): `triton`=10.10.40.11, `nereid`=10.10.40.12, `proteus`=10.10.40.13
+- **10.10.40.10 reserved as the shared VRRP floating IP** — the address that migrates between whichever node currently holds VRRP master, and the address the RV320's NAT/port-forward rule ultimately targets once cut over from the bare-metal reverse proxy.
+
+Physical placement: `triton`→`ceres`, `nereid`→`eros`, `proteus`→`pallas` — one per node, matching the VRRP pattern from the existing production HAProxy setup.
+
 ## Reasoning
 
 - **Belt objects vs. Stations** distinguishes the raw physical substrate (natural asteroids, i.e. the compute hosts themselves) from constructed infrastructure built to serve a function (network devices) — a clean conceptual split that also avoids name collisions between the two physical-layer categories.
@@ -60,12 +73,13 @@ The previously separate `mgmt.homelab.internal` domain (used in the Proxmox answ
 - **Subdomain labels match their tier's theme name directly** (`belt`, `station`, `orbit`) rather than generic technical terms (the originally used `host`/`net` were replaced for exactly this reason) — internal-only tiers have no professional-URL constraint, so full thematic commitment costs nothing.
 - **"Gate" over "Ring"** (originally considered) avoids reusing a singular, unique proper noun (there is only one Ring in the setting) as a generic category label for many different services.
 - **DNS-01 certificate issuance doesn't require public A records**, so even the fully internal-only tiers can carry real, browser-trusted Let's Encrypt certificates rather than self-signed ones, despite never being resolvable outside the internal network.
+- **Neptune moons for the HAProxy/ingress trio**: a sub-theme distinct from the general Saturn-moons VM theme, chosen specifically because Neptune's position as the outermost planet mirrors this trio's actual role as the platform's entry point.
 
 ## Consequences
 
 - **Certificate strategy differs by tier**, since ACME automation removes the operational-effort argument for wildcards, leaving only their downsides for public-facing services:
-- `belt.solsys.dev`, `station.solsys.dev`, `orbit.solsys.dev` (internal-only) use **wildcard certificates** — the Certificate Transparency log privacy benefit (hiding exact internal hostnames from public CT logs) is real here, and the usual wildcard blast-radius concern is already mitigated by VLAN segmentation (ADR-0031).
-- `gate.solsys.dev`, `app.solsys.dev`, `proto.solsys.dev` (public-facing) use **individual per-service certificates** via a `cert-manager.io/cluster-issuer` annotation per Ingress — smaller compromise/revocation blast radius, and no CT-log benefit to trade away since these hostnames are public by design regardless.
+  - `belt.solsys.dev`, `station.solsys.dev`, `orbit.solsys.dev` (internal-only) use **wildcard certificates** — the Certificate Transparency log privacy benefit (hiding exact internal hostnames from public CT logs) is real here, and the usual wildcard blast-radius concern is already mitigated by VLAN segmentation (ADR-0031).
+  - `gate.solsys.dev`, `app.solsys.dev`, `proto.solsys.dev` (public-facing) use **individual per-service certificates** via a `cert-manager.io/cluster-issuer` annotation per Ingress — smaller compromise/revocation blast radius, and no CT-log benefit to trade away since these hostnames are public by design regardless.
 - The Proxmox answer-file template's `fqdn` field and `nodes.yaml` hostnames use `ceres`/`eros`/`pallas` on `belt.solsys.dev`, replacing the earlier generic `pve1`/`pve2`/`pve3` placeholders and the retired `homelab.internal` domain.
 - Internal DNS (the home router/internal resolver) must be configured to resolve `*.belt.solsys.dev`, `*.station.solsys.dev`, and `*.orbit.solsys.dev` to internal IPs — these records deliberately do not exist in Cloudflare's public-facing zone.
 - Reassigning a ship name to a different workload later (e.g. if Donnager's role changes) is a documentation update only — no technical dependency is tied to the name itself.
