@@ -65,6 +65,29 @@ Addressing:
 
 Physical placement: `triton`→`ceres`, `nereid`→`eros`, `proteus`→`pallas` — one per node, matching the VRRP pattern from the existing production HAProxy setup.
 
+## Amendment: consolidated IPAM, RKE2 nodes use a uniform per-node suffix
+
+To avoid a real collision discovered between the RKE2 nodes' original
+DMZ-INGRESS addresses and the newly-added Neptune HAProxy trio on the
+same VLAN, the RKE2 nodes were renumbered to use one consistent last-octet
+suffix across every VLAN, rather than differing addresses per VLAN. This
+is simpler to remember and leaves no room for the kind of accidental
+collision that prompted this fix.
+
+| Node | MGMT | CLUSTER | STORAGE | DMZ-INGRESS | EGRESS |
+|---|---|---|---|---|---|
+| `enceladus` | 10.10.10.41 | 10.10.20.41 | 10.10.30.41 | 10.10.40.41 | 10.10.50.41 |
+| `mimas` | 10.10.10.42 | 10.10.20.42 | 10.10.30.42 | 10.10.40.42 | 10.10.50.42 |
+| `rhea` | 10.10.10.43 | 10.10.20.43 | 10.10.30.43 | 10.10.40.43 | 10.10.50.43 |
+| `triton` | 10.10.10.31 | — | — | 10.10.40.11 | — |
+| `nereid` | 10.10.10.32 | — | — | 10.10.40.12 | — |
+| `proteus` | 10.10.10.33 | — | — | 10.10.40.13 | — |
+| *(VRRP floating)* | — | — | — | **10.10.40.10** | — |
+| `iapetus` | 10.10.10.24 | — | — | — | — |
+
+The HAProxy trio and `iapetus` have no CLUSTER/STORAGE/EGRESS presence —
+those VLANs are exclusively for Kubernetes node traffic.
+
 ## Reasoning
 
 - **Belt objects vs. Stations** distinguishes the raw physical substrate (natural asteroids, i.e. the compute hosts themselves) from constructed infrastructure built to serve a function (network devices) — a clean conceptual split that also avoids name collisions between the two physical-layer categories.
