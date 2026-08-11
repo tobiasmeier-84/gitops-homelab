@@ -1,0 +1,1 @@
+vm_ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFhui9rpzE4grszrhYvAyTgv/Bj++Fb88sRhxtPpKSZh admin@homelab-vms"
