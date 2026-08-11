@@ -1,0 +1,7 @@
+node-ip: {{ rke2_node_ip }}
+tls-san:
+  - {{ inventory_hostname }}.orbit.solsys.dev
+  - {{ ansible_host }}
+  - rke2-api.solsys.dev
+cni: canal
+write-kubeconfig-mode: "0644"

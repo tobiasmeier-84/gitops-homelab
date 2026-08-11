@@ -4,3 +4,9 @@
   hosts: all
   roles:
     - common
+
+- name: Install RKE2 (3-node HA server cluster with embedded etcd)
+  hosts: rke2_nodes
+  serial: 1
+  roles:
+    - rke2
