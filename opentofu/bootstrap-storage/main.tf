@@ -127,3 +127,38 @@ resource "null_resource" "canterbury_autoexpand" {
     ]
   }
 }
+
+# ============================================================================
+# Caps ZFS ARC (Adaptive Replacement Cache) at 8GB per node. Uncapped, ARC
+# can grow to 50% of host RAM by default — left unchecked, this would eat
+# into the RAM budget allocated for VMs (RKE2 nodes at 24GB, titan, and
+# iapetus on ceres). Applied to all 3 nodes regardless of the pallas SFP+
+# situation, since this is host-wide memory management, unrelated to any
+# specific storage link.
+#
+# Two-part change: /etc/modprobe.d/zfs.conf makes it persistent across
+# reboots (requires update-initramfs, since ZFS loads via initramfs on a
+# ZFS-root system); the live /sys/module write applies it immediately
+# without waiting for a reboot. The live write can fail harmlessly if
+# current ARC usage already exceeds the new cap on some ZFS versions —
+# `|| true` handles that; the modprobe.d change still enforces it at the
+# next reboot regardless.
+# ============================================================================
+resource "null_resource" "zfs_arc_cap" {
+  for_each = toset(var.nodes)
+
+  connection {
+    type  = "ssh"
+    host  = "${each.value}.belt.solsys.dev"
+    user  = "root"
+    agent = true
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "echo 'options zfs zfs_arc_max=8589934592' > /etc/modprobe.d/zfs.conf",
+      "echo 8589934592 > /sys/module/zfs/parameters/zfs_arc_max || true",
+      "update-initramfs -u"
+    ]
+  }
+}
