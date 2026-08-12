@@ -20,3 +20,8 @@
   hosts: rke2_nodes
   roles:
     - longhorn-disk
+
+- name: Install Longhorn
+  hosts: rke2_nodes
+  roles:
+    - longhorn

@@ -1,4 +1,16 @@
 ---
+- name: Install open-iscsi (required by Longhorn manager's environment check)
+  apt:
+    name: open-iscsi
+    state: present
+    update_cache: true
+
+- name: Ensure iscsid is enabled and running
+  systemd:
+    name: iscsid
+    enabled: true
+    state: started
+
 - name: Get exact disk sizes in bytes
   command: lsblk -b -d -n -o NAME,SIZE
   register: lsblk_output

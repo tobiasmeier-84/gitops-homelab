@@ -1,0 +1,65 @@
+---
+- name: Deploy Longhorn HelmChart
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition: "{{ lookup('template', 'longhorn-helmchart.yaml.j2') }}"
+    state: present
+  when: inventory_hostname == groups['rke2_nodes'][0]
+
+- name: Wait for Longhorn manager pods to be running
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    kind: Pod
+    namespace: longhorn-system
+    label_selectors:
+      - app=longhorn-manager
+  register: longhorn_manager_pods
+  until: >
+    longhorn_manager_pods.resources | length > 0 and
+    longhorn_manager_pods.resources | selectattr('status.phase', 'equalto', 'Running') | list | length == longhorn_manager_pods.resources | length
+  retries: 30
+  delay: 20
+  when: inventory_hostname == groups['rke2_nodes'][0]
+
+# ---- Verify the known Helm chart bug (settings not applied on fresh
+# install, see longhorn/longhorn#11452) didn't bite us; force a
+# reconcile if it did ----
+
+- name: Check whether createDefaultDiskLabeledNodes was actually applied
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    kind: ConfigMap
+    name: longhorn-default-setting
+    namespace: longhorn-system
+  register: longhorn_settings_check
+  when: inventory_hostname == groups['rke2_nodes'][0]
+
+- name: Force a HelmChart reconcile if the setting is missing (known chart bug workaround)
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition:
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: longhorn
+        namespace: kube-system
+        annotations:
+          force-reconcile-timestamp: "{{ ansible_date_time.iso8601 }}"
+    state: patched
+  when:
+    - inventory_hostname == groups['rke2_nodes'][0]
+    - "'create-default-disk-labeled-nodes' not in (longhorn_settings_check.resources[0].data['default-setting.yaml'] | default(''))"
+
+- name: Re-check settings after forced reconcile, if it was needed
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    kind: ConfigMap
+    name: longhorn-default-setting
+    namespace: longhorn-system
+  register: longhorn_settings_recheck
+  until: "'create-default-disk-labeled-nodes' in (longhorn_settings_recheck.resources[0].data['default-setting.yaml'] | default(''))"
+  retries: 10
+  delay: 15
+  when:
+    - inventory_hostname == groups['rke2_nodes'][0]
+    - "'create-default-disk-labeled-nodes' not in (longhorn_settings_check.resources[0].data['default-setting.yaml'] | default(''))"
