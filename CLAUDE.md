@@ -27,6 +27,15 @@ reconstructable from this git repository alone.
   services behind it (several near-misses already happened this way —
   see `docs/BACKLOG.md` and the git log for examples).
 
+  ## When creating a new ADR
+
+**Add its decision-log row to `docs/architecture-decisions.md` in the
+same commit as the ADR file itself** — not as a follow-up step. This has
+already been missed twice (ADR-0036 and ADR-0040 both shipped without
+their row, caught later, needed a separate fix-up commit). The ADR file
+existing is not enough on its own; the decision log is the actual index
+people (including future Claude sessions) check first.
+
 ## Before making changes
 
 1. Read `docs/architecture-decisions.md` for the full decision log.
