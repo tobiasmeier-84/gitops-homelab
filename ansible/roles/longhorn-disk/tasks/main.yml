@@ -1,0 +1,82 @@
+---
+- name: Get exact disk sizes in bytes
+  command: lsblk -b -d -n -o NAME,SIZE
+  register: lsblk_output
+  changed_when: false
+
+- name: Identify canterbury device (bulk disk, ~500GB)
+  shell: |
+    echo "{{ lsblk_output.stdout }}" | awk '$2 > 450000000000 && $2 < 550000000000 {print "/dev/"$1}'
+  register: canterbury_device_result
+  changed_when: false
+
+- name: Identify tachi device (fast/DB-tier disk, ~100GB)
+  shell: |
+    echo "{{ lsblk_output.stdout }}" | awk '$2 > 90000000000 && $2 < 110000000000 {print "/dev/"$1}'
+  register: tachi_device_result
+  changed_when: false
+
+- name: Set device facts
+  set_fact:
+    longhorn_canterbury_device: "{{ canterbury_device_result.stdout | trim }}"
+    longhorn_tachi_device: "{{ tachi_device_result.stdout | trim }}"
+
+- name: Fail loudly if either device wasn't identified
+  fail:
+    msg: "Could not identify canterbury/tachi devices by size on {{ inventory_hostname }} — check lsblk output manually before proceeding."
+  when: longhorn_canterbury_device == "" or longhorn_tachi_device == ""
+
+- name: Format canterbury disk with ext4
+  filesystem:
+    fstype: ext4
+    dev: "{{ longhorn_canterbury_device }}"
+
+- name: Format tachi disk with ext4
+  filesystem:
+    fstype: ext4
+    dev: "{{ longhorn_tachi_device }}"
+
+- name: Create mount point for canterbury
+  file:
+    path: /mnt/longhorn/canterbury
+    state: directory
+    mode: '0755'
+
+- name: Create mount point for tachi
+  file:
+    path: /mnt/longhorn/tachi
+    state: directory
+    mode: '0755'
+
+- name: Mount canterbury disk persistently
+  mount:
+    path: /mnt/longhorn/canterbury
+    src: "{{ longhorn_canterbury_device }}"
+    fstype: ext4
+    state: mounted
+
+- name: Mount tachi disk persistently
+  mount:
+    path: /mnt/longhorn/tachi
+    src: "{{ longhorn_tachi_device }}"
+    fstype: ext4
+    state: mounted
+
+# ---- Tell Longhorn about both disks, tagged by tier, instead of relying
+# on its own single-default-disk auto-detection ----
+
+- name: Label node for custom Longhorn disk config
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    kind: Node
+    name: "{{ inventory_hostname }}"
+    definition:
+      metadata:
+        labels:
+          node.longhorn.io/create-default-disk: config
+        annotations:
+          node.longhorn.io/default-disks-config: |
+            [
+              {"path":"/mnt/longhorn/canterbury","allowScheduling":true,"tags":["bulk"]},
+              {"path":"/mnt/longhorn/tachi","allowScheduling":true,"tags":["fast"]}
+            ]

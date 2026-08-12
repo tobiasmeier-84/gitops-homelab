@@ -15,3 +15,8 @@
   hosts: haproxy
   roles:
     - haproxy
+
+- name: Prepare Longhorn disks on RKE2 nodes
+  hosts: rke2_nodes
+  roles:
+    - longhorn-disk
