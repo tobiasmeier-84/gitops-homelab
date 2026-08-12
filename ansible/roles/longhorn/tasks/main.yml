@@ -63,3 +63,40 @@
   when:
     - inventory_hostname == groups['rke2_nodes'][0]
     - "'create-default-disk-labeled-nodes' not in (longhorn_settings_check.resources[0].data['default-setting.yaml'] | default(''))"
+
+# ---- Storage network: point Longhorn at the dedicated Multus/Whereabouts
+# STORAGE VLAN network we proved working earlier (cross-node ping test on
+# real 10.10.30.0/24 addresses). This will restart all instance-manager
+# pods to apply — expected and safe, since no volumes exist yet.
+
+- name: Set Longhorn storage-network to use the dedicated STORAGE VLAN
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition: "{{ lookup('template', 'longhorn-storage-network-setting.yaml.j2') }}"
+    state: present
+  when: inventory_hostname == groups['rke2_nodes'][0]
+
+- name: Wait for instance-manager pods to restart and stabilize on the new network
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    kind: Pod
+    namespace: longhorn-system
+    label_selectors:
+      - longhorn.io/component=instance-manager
+  register: longhorn_im_pods
+  until: >
+    longhorn_im_pods.resources | length > 0 and
+    longhorn_im_pods.resources | selectattr('status.phase', 'equalto', 'Running') | list | length == longhorn_im_pods.resources | length
+  retries: 20
+  delay: 15
+  when: inventory_hostname == groups['rke2_nodes'][0]
+
+# ---- StorageClasses: bulk (canterbury) as cluster default, fast (tachi)
+# for workloads that explicitly request it (e.g. Nextcloud's database) ----
+
+- name: Deploy Longhorn StorageClasses (bulk default, fast opt-in)
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition: "{{ lookup('template', 'longhorn-storageclasses.yaml.j2') }}"
+    state: present
+  when: inventory_hostname == groups['rke2_nodes'][0]
