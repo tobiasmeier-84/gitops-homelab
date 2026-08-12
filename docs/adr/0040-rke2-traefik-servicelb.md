@@ -64,3 +64,16 @@ Our architecture never hits this limitation, because by design there's only ever
 ## Consequences
 - All four fixes are fully automated via the Ansible `rke2` role — a cluster rebuild from scratch reproduces this configuration without any manual step, closing the gap that would otherwise exist between "documented" and "actually reconstructable from git."
 - klipper-lb is sufficient for the current and foreseeable workload set (see above); MetalLB adoption is deferred until a concrete non-HTTP, directly-internet-facing workload actually requires it.
+
+## Addendum: HAProxy health check needed adjustment too
+
+Even after the ingress chain worked correctly, HAProxy's default health check
+(`option httpchk GET /`, implicitly expecting only 2xx/3xx) treated Traefik's
+correct `404` response (no routes configured yet) as an unhealthy backend —
+`Layer7 wrong status, code: 404`. Fixed with `http-check expect status
+200-499`, deliberately distinguishing "server is broken" (connection
+refused/timeout/5xx) from "server is fine, nothing's routed here yet" (4xx).
+Traefik's dedicated `/ping` health endpoint would be the textbook-correct
+target, but it's only exposed on Traefik's internal admin port (8080),
+not on the LoadBalancer Service — exposing that port externally just for
+a cleaner health check was judged not worth the security trade-off.
