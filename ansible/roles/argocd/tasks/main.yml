@@ -1,0 +1,29 @@
+---
+- name: Deploy ArgoCD HelmChart
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition: "{{ lookup('template', 'argocd-helmchart.yaml.j2') }}"
+    state: present
+  when: inventory_hostname == groups['rke2_nodes'][0]
+
+- name: Wait for ArgoCD server to be running
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    kind: Pod
+    namespace: argocd
+    label_selectors:
+      - app.kubernetes.io/name=argocd-server
+  register: argocd_server_pods
+  until: >
+    argocd_server_pods.resources | length > 0 and
+    argocd_server_pods.resources | selectattr('status.phase', 'equalto', 'Running') | list | length == argocd_server_pods.resources | length
+  retries: 30
+  delay: 15
+  when: inventory_hostname == groups['rke2_nodes'][0]
+
+- name: Deploy the app-of-apps root Application
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition: "{{ lookup('file', playbook_dir + '/../gitops/bootstrap/root-app.yaml') }}"
+    state: present
+  when: inventory_hostname == groups['rke2_nodes'][0]

@@ -25,3 +25,13 @@
   hosts: rke2_nodes
   roles:
     - longhorn
+
+- name: Bootstrap ArgoCD and app-of-apps
+  hosts: rke2_nodes
+  roles:
+    - argocd
+
+- name: Configure cert-manager's ClusterIssuer (once cert-manager itself is deployed by ArgoCD)
+  hosts: rke2_nodes
+  roles:
+    - cert-manager-issuer

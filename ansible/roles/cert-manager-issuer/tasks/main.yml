@@ -1,0 +1,53 @@
+---
+- name: Create cert-manager namespace (if cert-manager Application hasn't created it yet)
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: cert-manager
+  when: inventory_hostname == groups['rke2_nodes'][0]
+
+- name: Create Cloudflare API token secret for cert-manager DNS-01
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: cloudflare-api-token
+        namespace: cert-manager
+      type: Opaque
+      stringData:
+        api-token: "{{ lookup('env', 'cert_manager_cloudflare_token') }}"
+  when: inventory_hostname == groups['rke2_nodes'][0]
+
+- name: Fail loudly if the Cloudflare token env var isn't set
+  fail:
+    msg: "cert_manager_cloudflare_token is not set — did you run 'source ~/homelab-env.sh'?"
+  when: >
+    inventory_hostname == groups['rke2_nodes'][0] and
+    lookup('env', 'cert_manager_cloudflare_token') == ""
+
+- name: Deploy Let's Encrypt ClusterIssuer (DNS-01 via Cloudflare)
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition:
+      apiVersion: cert-manager.io/v1
+      kind: ClusterIssuer
+      metadata:
+        name: letsencrypt-dns
+      spec:
+        acme:
+          server: https://acme-v02.api.letsencrypt.org/directory
+          email: admin@solsys.dev
+          privateKeySecretRef:
+            name: letsencrypt-dns-account-key
+          solvers:
+            - dns01:
+                cloudflare:
+                  apiTokenSecretRef:
+                    name: cloudflare-api-token
+                    key: api-token
+  when: inventory_hostname == groups['rke2_nodes'][0]
