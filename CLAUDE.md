@@ -109,6 +109,16 @@ Jupiter-moon names).
   user/principal's permissions**, even if the resource itself is granted
   broader access directly (learned the hard way with Proxmox API tokens
   and privilege separation).
+- **Never edit a VM's cloud-init template (`user_data_file_id` source) for
+  a setting that can instead be applied live via `null_resource`/
+  `remote-exec`.** `user_data_file_id` is only consulted at initial VM
+  creation — any change to the referenced content forces a full
+  destroy-and-recreate of the VM, same as `import_from`. A one-line
+  timezone addition to `iapetus`'s cloud-init template once produced a
+  plan to fully destroy and recreate the MinIO VM. Caught by reading the
+  plan output before applying — always read `tofu plan` output for
+  `must be replaced` on anything holding real state, not just `to add`
+  counts.
 
 ## Current state
 

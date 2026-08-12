@@ -37,3 +37,12 @@
   apt:
     name: python3-kubernetes
     state: present
+
+- name: Check current timezone
+  command: timedatectl show --property=Timezone --value
+  register: current_timezone
+  changed_when: false
+
+- name: Set timezone to Europe/Zurich (CET/CEST, automatic DST)
+  command: timedatectl set-timezone Europe/Zurich
+  when: current_timezone.stdout != "Europe/Zurich"

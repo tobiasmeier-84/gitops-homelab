@@ -183,3 +183,18 @@ resource "null_resource" "minio_tls_setup" {
     ]
   }
 }
+
+resource "null_resource" "iapetus_timezone" {
+  connection {
+    type  = "ssh"
+    host  = "iapetus.orbit.solsys.dev"
+    user  = "admin"
+    agent = true
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "sudo timedatectl set-timezone Europe/Zurich"
+    ]
+  }
+}
