@@ -82,6 +82,20 @@
     mode: '0644'
   when: inventory_hostname == groups['rke2_nodes'][0]
 
+- name: Deploy Multus HelmChartConfig — enables Whereabouts for cluster-wide IPAM
+  template:
+    src: rke2-multus-config.yaml.j2
+    dest: /var/lib/rancher/rke2/server/manifests/rke2-multus-config.yaml
+    mode: '0644'
+  when: inventory_hostname == groups['rke2_nodes'][0]
+
+- name: Deploy longhorn-system namespace and storage NetworkAttachmentDefinition
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition: "{{ lookup('template', 'longhorn-storage-network.yaml.j2') }}"
+    state: present
+  when: inventory_hostname == groups['rke2_nodes'][0]
+
 - name: Wait for node-token to be generated
   wait_for:
     path: /var/lib/rancher/rke2/server/node-token

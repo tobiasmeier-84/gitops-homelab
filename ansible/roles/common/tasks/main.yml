@@ -32,3 +32,8 @@
     regexp: '^#?PasswordAuthentication'
     line: 'PasswordAuthentication no'
   notify: restart sshd
+
+- name: Install Python kubernetes library (needed for kubernetes.core.k8s module)
+  apt:
+    name: python3-kubernetes
+    state: present

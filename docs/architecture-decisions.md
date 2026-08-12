@@ -63,3 +63,5 @@ The single governing principle across every decision in this document: **if this
 | Cluster/GitOps | MinIO TLS | certbot + Cloudflare DNS-01, provisioned via OpenTofu | [0038](adr/0038-minio-tls.md) |
 | Security | Proxmox Entra ID OIDC | Single-tenant (toebel.ch), direct-grant auth interim | [0039](adr/0039-proxmox-entraid-oidc.md) |
 | Network/Platform | Switch SSH key auth | RSA (Comware, no ed25519 support), documented runbook | [Runbook](runbooks/network-device-ssh-key-auth.md) |
+| Cluster/GitOps | RKE2 ServiceLB + Traefik exposure | enable-servicelb, node-external-ip, hostPort fix | [0040](adr/0040-rke2-traefik-servicelb.md) |
+| Security | RKE2 CIS profile hardening | Longhorn pre-exemption, validated via full rebuild | [0041](adr/0041-rke2-cis-hardening.md) |

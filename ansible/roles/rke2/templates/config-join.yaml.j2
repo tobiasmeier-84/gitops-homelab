@@ -6,7 +6,9 @@ tls-san:
   - {{ inventory_hostname }}.orbit.solsys.dev
   - {{ ansible_host }}
   - rke2-api.solsys.dev
-cni: canal
+cni:
+  - multus
+  - canal
 enable-servicelb: true
 write-kubeconfig-mode: "0644"
 profile: "cis"
