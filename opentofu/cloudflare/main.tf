@@ -53,3 +53,21 @@ resource "cloudflare_dns_record" "txt_spf_cyon" {
   ttl     = 1
   proxied = false
 }
+
+resource "cloudflare_dns_record" "agatha_king_gate" {
+  zone_id = data.cloudflare_zone.solsys_dev.id
+  name    = "agatha-king.gate"
+  type    = "A"
+  content = "217.22.129.192"
+  ttl     = 300
+  proxied = false
+}
+
+resource "cloudflare_dns_record" "argocd_app" {
+  zone_id = data.cloudflare_zone.solsys_dev.id
+  name    = "argocd.app"
+  type    = "A"
+  content = "217.22.129.192"
+  ttl     = 300
+  proxied = false
+}

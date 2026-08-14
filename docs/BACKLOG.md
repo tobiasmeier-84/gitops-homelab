@@ -149,3 +149,12 @@ and needs updating to match — otherwise the docs actively mislead anyone
   environments; unclear whether it's relevant to this project's actual
   goals. Needs proper research before any decision, not a shallow
   answer.
+
+- **`external-dns`** — DNS records for new apps are currently added
+  manually via `opentofu/cloudflare/` (one commit per app). Genuinely
+  tied to completing the Crew tenant self-service story (ADR-0042/0043)
+  — a tenant deploying their own app via their own git repo shouldn't
+  need the platform owner to manually add a DNS record every time.
+  `external-dns` watches Ingress resources and creates/updates Cloudflare
+  records automatically. Worth its own deliberate setup, not bundled
+  into a smaller task.

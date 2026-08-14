@@ -9,6 +9,24 @@ spec:
   targetNamespace: argocd
   createNamespace: true
   valuesContent: |-
+    global:
+      domain: agatha-king.gate.solsys.dev
+    configs:
+      params:
+        server.insecure: true
     server:
       service:
         type: ClusterIP
+      ingress:
+        enabled: true
+        ingressClassName: traefik
+        annotations:
+          cert-manager.io/cluster-issuer: letsencrypt-dns
+        tls: true
+        extraHosts:
+          - name: argocd.app.solsys.dev
+            path: /
+        extraTls:
+          - hosts:
+              - argocd.app.solsys.dev
+            secretName: argocd-app-tls
