@@ -2,19 +2,15 @@ terraform {
   required_version = ">= 1.7.0"
 
   required_providers {
-    azuread = {
-      source  = "hashicorp/azuread"
-      version = "~> 3"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = ">= 3.6.0"
+    proxmox = {
+      source  = "bpg/proxmox"
+      version = ">= 0.111.0"
     }
   }
 
   backend "s3" {
     bucket                      = "opentofu-state"
-    key                         = "entraid/terraform.tfstate"
+    key                         = "proxmox-entraid/terraform.tfstate"
     endpoint                    = "https://iapetus.orbit.solsys.dev:9000"
     region                      = "us-east-1"
     skip_credentials_validation = true
@@ -24,7 +20,9 @@ terraform {
   }
 }
 
-provider "azuread" {
-  tenant_id = var.tenant_id
-  use_cli   = true
+provider "proxmox" {
+  endpoint = var.pve_api_endpoint
+  username = "root@pam"
+  password = var.pve_root_password
+  insecure = false
 }
