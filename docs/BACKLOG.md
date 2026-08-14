@@ -56,15 +56,11 @@ but each item was a conscious trade-off worth revisiting eventually.
   assigned meaning, for a future use not yet identified (e.g. a genuine
   staging environment). ([ADR-0035](adr/0035-naming-convention.md))
 
-  - **Proxmox Entra ID group-based authorization** — currently the admin
-  user was granted `Administrator` directly
-  (`pveum aclmod / -user <user>@entraid -role Administrator`), not via a
-  group claim. Works, but doesn't scale — a second admin needs another
-  manual grant rather than just joining a group. Proper fix: configure a
-  groups claim in the Entra ID token, create a `pve-admins` security
-  group, and map that group to the Proxmox role instead.
-  ([ADR-0021](adr/0021-entraid-group-authorization-mapping.md),
-  [ADR-0039](adr/0039-proxmox-entraid-oidc.md))
+- [x] **RESOLVED** — Proxmox Entra ID group-based authorization implemented
+      via App Roles + `proxmox_realm_openid`/`proxmox_virtual_environment_group`/
+      `proxmox_acl`, fully OpenTofu-managed. Old direct per-user grant
+      removed and confirmed unnecessary via a clean logout/login test.
+      See [ADR-0042](adr/0042-cross-service-rbac.md).
 
 ## IaC retrofit — manual steps to bring under OpenTofu management
 
@@ -135,3 +131,21 @@ and needs updating to match — otherwise the docs actively mislead anyone
     with a genuine Intel-branded DAC (`821-24-071-02`), confirmed
     working via kernel probe, switch MAC table, and live traffic.
     `vmbr2`/MTU 9000/`rhea`'s STORAGE NIC all completed.
+
+- **Proxmox VE / Debian host CIS hardening** — no official CIS benchmark
+  exists for Proxmox VE itself (confirmed via Proxmox's own community
+  forum). Community consensus is to extend the CIS Debian Linux
+  Benchmark with Proxmox-specific additions, but multiple sources warn
+  this risks breaking cluster communication (corosync/pmxcfs) or ZFS
+  functionality if applied without careful, tested adaptation — several
+  community-maintained guides explicitly flag controls as "not yet
+  validated." Needs a dedicated, carefully-tested effort, not a quick
+  script run. The Debian-based VM guests (RKE2 nodes, HAProxy trio) are
+  a safer, more direct fit for the standard CIS Debian Benchmark, since
+  they carry no Proxmox-specific services.
+- **FIPS 140 applicability** — not researched in depth. Debian mainline's
+  FIPS tooling maturity is unclear (unlike RHEL's first-class "FIPS
+  mode"). Typically a compliance requirement for regulated/government
+  environments; unclear whether it's relevant to this project's actual
+  goals. Needs proper research before any decision, not a shallow
+  answer.

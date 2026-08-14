@@ -65,3 +65,4 @@ The single governing principle across every decision in this document: **if this
 | Network/Platform | Switch SSH key auth | RSA (Comware, no ed25519 support), documented runbook | [Runbook](runbooks/network-device-ssh-key-auth.md) |
 | Cluster/GitOps | RKE2 ServiceLB + Traefik exposure | enable-servicelb, node-external-ip, hostPort fix | [0040](adr/0040-rke2-traefik-servicelb.md) |
 | Security | RKE2 CIS profile hardening | Longhorn pre-exemption, validated via full rebuild | [0041](adr/0041-rke2-cis-hardening.md) |
+| Security | Cross-service RBAC (Captain/Crew/Passenger) | App Roles, domain-prefixed groups, Proxmox first | [0042](adr/0042-cross-service-rbac.md) |
