@@ -67,3 +67,5 @@ The single governing principle across every decision in this document: **if this
 | Security | RKE2 CIS profile hardening | Longhorn pre-exemption, validated via full rebuild | [0041](adr/0041-rke2-cis-hardening.md) |
 | Security | Cross-service RBAC (Captain/Crew/Passenger) | App Roles, domain-prefixed groups, Proxmox first | [0042](adr/0042-cross-service-rbac.md) |
 | Network/Migration | nginx SNI-passthrough bridge | Real public traffic to new stack, zero disruption to existing sites | [0043](adr/0043-nginx-bridge-migration.md) |
+| Network/Security | Uranus moons for special-infra VM tier | Titania/Oberon reserved for DNS+filtering | [0044](adr/0044-uranus-special-infra-naming.md) |
+| Network/Security | ZTNA architecture (tool choice deferred) | HAProxy-reused HA, Mars-tier naming, HTTP+SSH scope | [0045](adr/0045-ztna-architecture.md) |
