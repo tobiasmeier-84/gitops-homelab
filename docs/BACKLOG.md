@@ -158,3 +158,13 @@ and needs updating to match — otherwise the docs actively mislead anyone
   `external-dns` watches Ingress resources and creates/updates Cloudflare
   records automatically. Worth its own deliberate setup, not bundled
   into a smaller task.
+
+- **ZTNA for admin-plane interfaces (Proxmox, and future Harbor/Grafana
+  admin UIs)** — only reachable from internal VLANs today; a demo/recruiter
+  identity can't log in remotely without VPN. Direct port-forwarding
+  rejected (hypervisor management planes shouldn't be internet-facing
+  regardless of account scoping). Candidates, not yet decided:
+  Cloudflare Access (free tier, proprietary, reuses existing Cloudflare
+  setup + Entra ID), Pomerium (open source, self-hosted, native OIDC),
+  Pangolin (open source, newer, Cloudflare-Tunnel-alternative — maturity
+  unconfirmed). Decide when actually prioritized.
