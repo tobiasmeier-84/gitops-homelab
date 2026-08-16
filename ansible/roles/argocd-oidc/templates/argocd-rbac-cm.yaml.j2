@@ -1,0 +1,25 @@
+policy.default: role:passenger-default
+scopes: '[roles]'
+policy.csv: |
+  p, role:captain, applications, *, */*, allow
+  p, role:captain, clusters, *, *, allow
+  p, role:captain, repositories, *, *, allow
+  p, role:captain, projects, *, *, allow
+  p, role:captain, accounts, *, *, allow
+  p, role:captain, certificates, *, *, allow
+  p, role:captain, gpgkeys, *, *, allow
+  p, role:captain, logs, get, */*, allow
+  p, role:captain, exec, create, */*, allow
+
+  p, role:crew, applications, *, */*, allow
+  p, role:crew, logs, get, */*, allow
+  p, role:crew, repositories, get, *, allow
+
+  p, role:passenger, applications, get, */*, allow
+  p, role:passenger, logs, get, */*, allow
+  p, role:passenger, projects, get, *, allow
+  p, role:passenger, repositories, get, *, allow
+
+  g, agatha-king.captain, role:captain
+  g, agatha-king.crew, role:crew
+  g, agatha-king.passenger, role:passenger

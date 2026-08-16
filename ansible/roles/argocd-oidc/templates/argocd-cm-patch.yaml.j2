@@ -1,0 +1,11 @@
+url: https://agatha-king.gate.solsys.dev
+oidc.config: |
+  name: Azure
+  issuer: https://login.microsoftonline.com/0b87a43d-5640-4e22-a2f2-d13394ff6191/v2.0
+  clientID: 734715d4-6d90-47da-abfc-f0d228409f8c
+  clientSecret: $oidc.azure.clientSecret
+  requestedScopes:
+    - openid
+    - profile
+    - email
+  userNameKey: preferred_username

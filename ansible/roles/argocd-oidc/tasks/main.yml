@@ -1,0 +1,71 @@
+---
+- name: Fail loudly if the ArgoCD client secret env var isn't set
+  fail:
+    msg: "argocd_entraid_client_secret is not set — did you run 'source ~/homelab-env.sh'?"
+  when: >
+    inventory_hostname == groups['rke2_nodes'][0] and
+    lookup('env', 'argocd_entraid_client_secret') == ""
+
+- name: Set the OIDC client secret in argocd-secret
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    kind: Secret
+    name: argocd-secret
+    namespace: argocd
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: argocd-secret
+        namespace: argocd
+      stringData:
+        oidc.azure.clientSecret: "{{ lookup('env', 'argocd_entraid_client_secret') | trim }}"
+    state: patched
+  when: inventory_hostname == groups['rke2_nodes'][0]
+
+- name: Patch argocd-cm with OIDC config
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    kind: ConfigMap
+    name: argocd-cm
+    namespace: argocd
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: argocd-cm
+        namespace: argocd
+      data: "{{ lookup('template', 'argocd-cm-patch.yaml.j2') | from_yaml }}"
+    state: patched
+  when: inventory_hostname == groups['rke2_nodes'][0]
+
+- name: Patch argocd-rbac-cm with RBAC policy
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    kind: ConfigMap
+    name: argocd-rbac-cm
+    namespace: argocd
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: argocd-rbac-cm
+        namespace: argocd
+      data: "{{ lookup('template', 'argocd-rbac-cm.yaml.j2') | from_yaml }}"
+    state: patched
+  when: inventory_hostname == groups['rke2_nodes'][0]
+
+- name: Restart argocd-server to pick up new config
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    kind: Deployment
+    name: argocd-server
+    namespace: argocd
+    definition:
+      spec:
+        template:
+          metadata:
+            annotations:
+              kubectl.kubernetes.io/restartedAt: "{{ ansible_date_time.iso8601 }}"
+    state: patched
+  when: inventory_hostname == groups['rke2_nodes'][0]

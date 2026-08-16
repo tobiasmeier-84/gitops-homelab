@@ -80,7 +80,10 @@ resource "azuread_group_member" "admin_agatha_king_captain" {
 }
 
 resource "random_uuid" "app_role_ids" {
-  for_each = toset(["belt-captain", "belt-crew", "belt-passenger"])
+  for_each = toset([
+    "belt-captain", "belt-crew", "belt-passenger",
+    "agatha-king-captain", "agatha-king-crew", "agatha-king-passenger",
+  ])
 }
 
 resource "azuread_service_principal" "proxmox_homelab" {
@@ -93,4 +96,59 @@ resource "azuread_app_role_assignment" "belt" {
   app_role_id         = random_uuid.app_role_ids[each.key].result
   principal_object_id = azuread_group.rbac[each.key].object_id
   resource_object_id  = azuread_service_principal.proxmox_homelab.object_id
+}
+
+resource "azuread_application" "argocd" {
+  display_name     = "argocd-agatha-king"
+  sign_in_audience = "AzureADMyOrg"
+
+  web {
+    redirect_uris = [
+      "https://agatha-king.gate.solsys.dev/auth/callback",
+    ]
+  }
+
+  app_role {
+    id                   = random_uuid.app_role_ids["agatha-king-captain"].result
+    allowed_member_types = ["User"]
+    display_name         = "Agatha King Captain"
+    description          = "Full ArgoCD administrator access"
+    value                = "agatha-king.captain"
+    enabled              = true
+  }
+
+  app_role {
+    id                   = random_uuid.app_role_ids["agatha-king-crew"].result
+    allowed_member_types = ["User"]
+    display_name         = "Agatha King Crew"
+    description          = "Sync/manage Applications, no RBAC/Project admin"
+    value                = "agatha-king.crew"
+    enabled              = true
+  }
+
+  app_role {
+    id                   = random_uuid.app_role_ids["agatha-king-passenger"].result
+    allowed_member_types = ["User"]
+    display_name         = "Agatha King Passenger"
+    description          = "Read-only ArgoCD access"
+    value                = "agatha-king.passenger"
+    enabled              = true
+  }
+}
+
+resource "azuread_service_principal" "argocd" {
+  client_id = azuread_application.argocd.client_id
+}
+
+resource "azuread_application_password" "argocd" {
+  application_id = azuread_application.argocd.id
+  display_name   = "argocd-oidc-client-secret"
+}
+
+resource "azuread_app_role_assignment" "agatha_king" {
+  for_each = toset(["agatha-king-captain", "agatha-king-crew", "agatha-king-passenger"])
+
+  app_role_id         = random_uuid.app_role_ids[each.key].result
+  principal_object_id = azuread_group.rbac[each.key].object_id
+  resource_object_id  = azuread_service_principal.argocd.object_id
 }
