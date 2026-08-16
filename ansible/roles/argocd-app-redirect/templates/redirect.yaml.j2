@@ -1,0 +1,36 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-to-agatha-king
+  namespace: argocd
+spec:
+  redirectRegex:
+    regex: "^https://argocd\\.app\\.solsys\\.dev/(.*)"
+    replacement: "https://agatha-king.gate.solsys.dev/${1}"
+    permanent: true
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-app-redirect
+  namespace: argocd
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: argocd-redirect-to-agatha-king@kubernetescrd
+    cert-manager.io/cluster-issuer: letsencrypt-dns
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - argocd.app.solsys.dev
+      secretName: argocd-app-tls
+  rules:
+    - host: argocd.app.solsys.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  number: 80

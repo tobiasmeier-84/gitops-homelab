@@ -1,0 +1,7 @@
+---
+- name: Deploy argocd.app.solsys.dev redirect Middleware + Ingress
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition: "{{ lookup('template', 'redirect.yaml.j2') }}"
+    state: present
+  when: inventory_hostname == groups['rke2_nodes'][0]

@@ -40,3 +40,8 @@
   hosts: rke2_nodes
   roles:
     - argocd-oidc
+
+- name: Redirect argocd.app.solsys.dev to the primary SSO hostname
+  hosts: rke2_nodes
+  roles:
+    - argocd-app-redirect
