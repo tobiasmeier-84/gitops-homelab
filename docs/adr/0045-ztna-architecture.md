@@ -1,7 +1,6 @@
 # ADR-0045: ZTNA architecture for admin-plane access (tool choice deferred)
 
-**Status:** Proposed — tool selection open, architecture and
-requirements accepted
+**Status:** Accepted
 
 ## Context
 Admin-plane services (Proxmox web UI today; potentially SSH to network
@@ -58,31 +57,76 @@ ZTNA in front of something already identity-gated and meant to be
 public would be redundant friction, not additional real security. ZTNA
 is specifically for admin surfaces with no app-level SSO of their own.
 
-## Tool choice — deferred, two real candidates
+## Tool choice: Pomerium
 
-**Pomerium** — mature, OIDC-native (plugs directly into the existing
-Entra ID setup with no new identity plumbing), excellent HTTP-native
-experience. Does support TCP/SSH, but it's a second-class capability:
-requires client-side tooling (`pomerium-cli`/Pomerium Desktop) rather
-than the clientless experience its HTTP routes offer, or a more
-involved "Native SSH" mode requiring SSH servers to trust Pomerium's
-own CA. Needs genuine L4/TCP-mode passthrough if fronted by HAProxy
-(likely compatible with the existing `mode tcp` backend pattern already
-used for Traefik, but unverified in practice).
+Following dedicated research (see `docs/research/ztna-pomerium-vs-pangolin.md`),
+**Pomerium** (Core, Apache-2.0) is the chosen tool, over Pangolin and
+Teleport.
 
-**Pangolin** — WireGuard-based, treats HTTP and TCP/SSH as equally
-first-class under one control plane and identity model — a
-structurally better fit for a mixed HTTP+SSH requirement. Open source.
-Current production maturity not yet confirmed; needs dedicated research
-before committing, not a decision to rush under momentum from an
-unrelated work session.
+### Why Pomerium won
+
+- **Licensing is the deciding factor.** Pomerium Core is Apache-2.0 and
+  includes everything needed — Entra ID OIDC, HTTP routing, TCP
+  tunneling, and Native SSH — with no paywall. Pangolin's Community
+  Edition does **not** include external IdP support or SSH at all;
+  both are gated behind its Enterprise Edition, which — while free for
+  personal/home use — requires an activated commercial license key.
+  Adopting Pangolin would mean depending on a vendor's licensing
+  decisions for the two capabilities this project actually needs.
+- **The exact deployment topology is explicitly documented and
+  supported.** Pomerium's own docs specifically warn against sitting
+  behind an HTTP-mode proxy and instruct configuring the front-end load
+  balancer in L4/TCP mode — precisely the existing HAProxy VRRP
+  SNI-passthrough setup already built (ADR-0031, ADR-0040). There's a
+  dedicated guide for "SSH over port 443 through an L4 edge." Pangolin,
+  by contrast, is designed to *be* the edge itself (terminates TLS via
+  Traefik, needs public 80/443 + WireGuard UDP ports) — a structurally
+  awkward fit behind an existing HAProxy layer.
+- **SSH without client tooling, for standard OpenSSH targets.**
+  Pomerium's Native SSH mode acts as an SSH certificate authority,
+  issuing short-lived certificates via a standard `ssh` client — no
+  agent, no per-user key management. Works directly against Proxmox
+  hosts (standard OpenSSH, supports `TrustedUserCAKeys`).
+- **Longer track record and an independent security audit.** In
+  production since 2019, backed by a $18M total raise (Series A led by
+  Benchmark, June 2024), and audited by Cure53 (March 2021, findings
+  resolved). Pangolin is younger (first commits Sept 2024) and has
+  disclosed two Critical/High CVEs in its authentication and 2FA
+  components as recently as Dec 2025.
+
+### Known caveat: HPE Comware switches may not support Native SSH mode
+
+Native SSH CA-trust requires the target SSH server to support
+`TrustedUserCAKeys` — standard OpenSSH does, but Comware's SSH stack
+may not (untested as of this ADR). If confirmed unsupported, fall back
+to Pomerium's TCP-tunnel or ProxyJump mode for `medina`/`anderson`
+specifically — ProxyJump doesn't require the upstream to trust the CA,
+so it works regardless. Proxmox hosts are expected to work via full
+Native SSH without this fallback. **Verify directly against a real
+Comware switch before finalizing the switch-access design.**
+
+### Staged rollout plan
+1. Deploy Pomerium Core on `phobos`/`deimos` (2 vCPU/2-4GB each),
+   wire Entra ID OIDC (`idp_provider: azure`), add a groups claim
+   consistent with the existing `belt-*` group scheme.
+2. Gate the Proxmox VE UI first (HTTP route, `belt-captain`/`belt-crew`
+   policy). Point HAProxy's existing SNI-based backend selection at
+   Pomerium for this hostname. Confirm a policy change actually revokes
+   access.
+3. Add SSH for Proxmox hosts via Native SSH (install Pomerium's CA
+   public key as `TrustedUserCAKeys`).
+4. Test Native SSH against a Comware switch; fall back to
+   TCP-tunnel/ProxyJump if unsupported.
+5. Only once confirmed working end-to-end: remove the existing
+   direct-access firewall rules to the MGMT VLAN, per this ADR's
+   original goal.
 
 ## Consequences
 - `phobos`/`deimos` are reserved exclusively for this project — not
   available for other Mars-tier or general infrastructure use.
-- Decision on Pomerium vs. Pangolin deferred to a dedicated research
-  session (a plausible candidate for the Research feature, given the
-  genuine architectural trade-offs involved).
+- Full research comparison saved as `docs/research/ztna-pomerium-vs-pangolin.md`
+  for future reference (e.g., if Pangolin's licensing changes, or if
+  the Comware SSH caveat forces a reconsideration).
 - Once built, `docs/BACKLOG.md`'s existing "ZTNA for admin-plane
   interfaces" item is superseded by this ADR and should be marked as
   such.
