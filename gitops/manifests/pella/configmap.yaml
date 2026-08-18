@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pella-update-script
+  namespace: pella
+data:
+  update-ddns.sh: |
+    #!/bin/sh
+    set -e
+
+    CURRENT_IP=$(curl -s https://ifconfig.me)
+
+    RESPONSE=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${CF_RECORD_ID}" \
+      -H "Authorization: Bearer ${CF_API_TOKEN}" \
+      -H "Content-Type: application/json")
+
+    CURRENT_DNS_IP=$(echo "$RESPONSE" | grep -o '"content":"[^"]*"' | head -1 | sed 's/"content":"//;s/"//')
+
+    if [ "$CURRENT_IP" = "$CURRENT_DNS_IP" ]; then
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) IP unchanged (${CURRENT_IP}), nothing to do"
+      exit 0
+    fi
+
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) IP changed: ${CURRENT_DNS_IP} -> ${CURRENT_IP}, updating..."
+
+    UPDATE_RESPONSE=$(curl -s -X PATCH "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${CF_RECORD_ID}" \
+      -H "Authorization: Bearer ${CF_API_TOKEN}" \
+      -H "Content-Type: application/json" \
+      --data "{\"content\":\"${CURRENT_IP}\"}")
+
+    if echo "$UPDATE_RESPONSE" | grep -q '"success":true'; then
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Updated successfully to ${CURRENT_IP}"
+    else
+      echo "ERROR: update failed: ${UPDATE_RESPONSE}"
+      exit 1
+    fi

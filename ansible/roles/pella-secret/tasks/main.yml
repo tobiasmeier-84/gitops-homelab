@@ -1,0 +1,35 @@
+---
+- name: Fail loudly if Pella's Cloudflare credentials aren't set
+  fail:
+    msg: "pella_cloudflare_token/zone_id/record_id not set — did you run 'source ~/homelab-env.sh'?"
+  when: >
+    inventory_hostname == groups['rke2_nodes'][0] and
+    (lookup('env', 'pella_cloudflare_token') == "" or
+     lookup('env', 'pella_cloudflare_zone_id') == "")
+
+- name: Create pella namespace (ArgoCD may not have synced yet)
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: pella
+  when: inventory_hostname == groups['rke2_nodes'][0]
+
+- name: Create Pella's Cloudflare credentials secret
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: pella-cloudflare-credentials
+        namespace: pella
+      type: Opaque
+      stringData:
+        CF_API_TOKEN: "{{ lookup('env', 'pella_cloudflare_token') | trim }}"
+        CF_ZONE_ID: "{{ lookup('env', 'pella_cloudflare_zone_id') | trim }}"
+        CF_RECORD_ID: "{{ pella_record_id }}"
+    state: present
+  when: inventory_hostname == groups['rke2_nodes'][0]

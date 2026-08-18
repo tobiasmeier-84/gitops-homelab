@@ -45,3 +45,8 @@
   hosts: rke2_nodes
   roles:
     - argocd-app-redirect
+
+- name: Configure Pella DDNS credentials
+  hosts: rke2_nodes
+  roles:
+    - pella-secret

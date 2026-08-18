@@ -1,0 +1,30 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pella-ddns-updater
+  namespace: pella
+spec:
+  schedule: "*/5 * * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: ddns-updater
+              image: curlimages/curl:8.10.1
+              command: ["/bin/sh", "/scripts/update-ddns.sh"]
+              envFrom:
+                - secretRef:
+                    name: pella-cloudflare-credentials
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+          volumes:
+            - name: script
+              configMap:
+                name: pella-update-script
+                defaultMode: 0755

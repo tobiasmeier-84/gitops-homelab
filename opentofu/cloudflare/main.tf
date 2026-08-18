@@ -54,11 +54,24 @@ resource "cloudflare_dns_record" "txt_spf_cyon" {
   proxied = false
 }
 
+resource "cloudflare_dns_record" "dynamic" {
+  zone_id = data.cloudflare_zone.solsys_dev.id
+  name    = "dynamic"
+  type    = "A"
+  content = "0.0.0.0"  # placeholder — Pella owns the real value from here on
+  ttl     = 300
+  proxied = false
+
+  lifecycle {
+    ignore_changes = [content]
+  }
+}
+
 resource "cloudflare_dns_record" "agatha_king_gate" {
   zone_id = data.cloudflare_zone.solsys_dev.id
   name    = "agatha-king.gate"
-  type    = "A"
-  content = "217.22.129.192"
+  type    = "CNAME"
+  content = "dynamic.solsys.dev"
   ttl     = 300
   proxied = false
 }
@@ -66,8 +79,12 @@ resource "cloudflare_dns_record" "agatha_king_gate" {
 resource "cloudflare_dns_record" "argocd_app" {
   zone_id = data.cloudflare_zone.solsys_dev.id
   name    = "argocd.app"
-  type    = "A"
-  content = "217.22.129.192"
+  type    = "CNAME"
+  content = "dynamic.solsys.dev"
   ttl     = 300
   proxied = false
+}
+
+output "dynamic_dns_record_id" {
+  value = cloudflare_dns_record.dynamic.id
 }
