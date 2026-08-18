@@ -13,10 +13,19 @@ spec:
       template:
         spec:
           restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
           containers:
             - name: ddns-updater
               image: curlimages/curl:8.10.1
               command: ["/bin/sh", "/scripts/update-ddns.sh"]
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
               envFrom:
                 - secretRef:
                     name: pella-cloudflare-credentials
