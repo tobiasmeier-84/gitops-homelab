@@ -13,8 +13,6 @@ data:
     RESPONSE=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${CF_RECORD_ID}" \
       -H "Authorization: Bearer ${CF_API_TOKEN}" \
       -H "Content-Type: application/json")
-      
-    echo "DEBUG RAW RESPONSE: $RESPONSE"
 
     CURRENT_DNS_IP=$(echo "$RESPONSE" | grep -o '"content":"[^"]*"' | head -1 | sed 's/"content":"//;s/"//')
 
