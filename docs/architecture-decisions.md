@@ -69,3 +69,4 @@ The single governing principle across every decision in this document: **if this
 | Network/Migration | nginx SNI-passthrough bridge | Real public traffic to new stack, zero disruption to existing sites | [0043](adr/0043-nginx-bridge-migration.md) |
 | Network/Security | Uranus moons for special-infra VM tier | Titania/Oberon reserved for DNS+filtering | [0044](adr/0044-uranus-special-infra-naming.md) |
 | Network/Security | ZTNA architecture (tool choice deferred) | HAProxy-reused HA, Mars-tier naming, HTTP+SSH scope | [0045](adr/0045-ztna-architecture.md) |
+| Cluster/GitOps | App-of-apps directory pattern (apps/ vs manifests/) | Avoids dual-ownership conflict from recursive scan | [0046](adr/0046-app-of-apps-directory-pattern.md) |
