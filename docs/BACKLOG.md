@@ -168,3 +168,11 @@ and needs updating to match — otherwise the docs actively mislead anyone
   setup + Entra ID), Pomerium (open source, self-hosted, native OIDC),
   Pangolin (open source, newer, Cloudflare-Tunnel-alternative — maturity
   unconfirmed). Decide when actually prioritized.
+
+- **`external-dns`** — **priority raised**: no longer just convenience,
+  now a genuine blocker for full self-service (see the tenant
+  onboarding runbook, `docs/runbooks/tenant-onboarding.md`, and
+  ADR-0046). Without it, every new tenant hostname needs a manual
+  OpenTofu commit to `opentofu/cloudflare/`, breaking the "deploy via
+  git alone" promise for the DNS piece specifically. Watches Ingress
+  resources, creates/updates Cloudflare records automatically.
