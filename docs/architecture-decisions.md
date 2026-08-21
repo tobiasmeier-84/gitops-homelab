@@ -71,3 +71,4 @@ The single governing principle across every decision in this document: **if this
 | Network/Security | ZTNA architecture (tool choice deferred) | HAProxy-reused HA, Mars-tier naming, HTTP+SSH scope | [0045](adr/0045-ztna-architecture.md) |
 | Cluster/GitOps | App-of-apps directory pattern (apps/ vs manifests/) | Avoids dual-ownership conflict from recursive scan | [0046](adr/0046-app-of-apps-directory-pattern.md) |
 | Security | ZTNA (Pomerium) deployment gotchas | Multi-app-registration role assignments, c-ares DNS incompatibility | [0047](adr/0047-ztna-pomerium-deployment.md) |
+| Cluster/GitOps | Self-hosted IaC CI/CD pipeline (design only) | GitHub Actions runner, dedicated SOPS key, approval gate | [0048](adr/0048-iac-pipeline-architecture.md) |

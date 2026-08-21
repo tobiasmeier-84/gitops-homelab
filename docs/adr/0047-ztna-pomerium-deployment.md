@@ -93,3 +93,35 @@ implementation that are worth recording precisely.
 - The router's `c-ares`-incompatible DNS behavior is worth keeping in
   mind for any *other* future service with a strict DNS resolver, not
   just this one.
+
+## Addendum: non-browser (API token) access stays outside ZTNA — investigated, deliberately deferred
+
+Removing the MGMT-zone firewall rules entirely (this ADR's original
+goal) surfaced a real gap: OpenTofu's own workflow authenticates to
+Proxmox via a direct API token on port 8006, from the operator's own
+workstation — a non-browser flow Pomerium's OIDC-based session model
+was never designed to gate. Investigated Pomerium's own answer to this
+(**Service Accounts** — bearer-token machine-to-machine auth, evaluated
+by the same policy engine as human sessions) and found it is a
+**Pomerium Enterprise / Pomerium Zero feature, not available in
+Pomerium Core** (the free, self-hosted tier actually deployed here).
+
+Pricing checked directly: Zero starts at **$7/user/month** (annual
+billing; $9/month monthly), Enterprise is **contact-sales, no public
+price**, clearly scoped for organizations well beyond home-lab scale.
+Paying for Zero specifically to unlock Service Accounts would also mean
+depending on a third-party-hosted control plane for authentication —
+in tension with the self-hosted, "everything stays on your own
+infrastructure" reasoning that made Pomerium Core the right choice in
+ADR-0045 in the first place.
+
+**Decision: stay on Pomerium Core, don't pay for Service Accounts.**
+Instead, keep a narrow firewall exception — direct port 8006 access
+from the operator's own known workstation/subnet only — for the
+OpenTofu/API-token workflow specifically, while all human/browser-based
+admin access continues to route through Pomerium as designed. This is
+still a substantial narrowing from the original "any device on this
+VLAN can reach MGMT" rule down to "one specific known source," even
+though it isn't the full zero-exception state originally envisioned.
+Revisit only if a second person ever needs genuine service-account-style
+access (not just the current operator's own convenience).
