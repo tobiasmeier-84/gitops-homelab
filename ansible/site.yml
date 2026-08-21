@@ -50,3 +50,8 @@
   hosts: rke2_nodes
   roles:
     - pella-secret
+
+- name: Install Pomerium ZTNA gateway on Deimos
+  hosts: deimos
+  roles:
+    - pomerium

@@ -7,6 +7,7 @@ resource "azuread_application" "proxmox_homelab" {
       "https://ceres.belt.solsys.dev:8006/",
       "https://eros.belt.solsys.dev:8006/",
       "https://pallas.belt.solsys.dev:8006/",
+      "https://belt.mcrn.solsys.dev/",
     ]
   }
 
@@ -151,4 +152,72 @@ resource "azuread_app_role_assignment" "agatha_king" {
   app_role_id         = random_uuid.app_role_ids[each.key].result
   principal_object_id = azuread_group.rbac[each.key].object_id
   resource_object_id  = azuread_service_principal.argocd.object_id
+}
+
+resource "random_uuid" "pomerium_app_role_ids" {
+  for_each = toset(["belt-captain", "belt-crew", "belt-passenger"])
+}
+
+resource "azuread_application" "pomerium" {
+  display_name     = "pomerium-mcrn"
+  sign_in_audience = "AzureADMyOrg"
+
+  web {
+    redirect_uris = [
+      "https://deimos.mcrn.solsys.dev/oauth2/callback",
+    ]
+  }
+
+  app_role {
+    id                   = random_uuid.pomerium_app_role_ids["belt-captain"].result
+    allowed_member_types = ["User"]
+    display_name         = "Belt Captain"
+    description          = "Full Proxmox admin access via ZTNA"
+    value                = "belt.captain"
+    enabled              = true
+  }
+
+  app_role {
+    id                   = random_uuid.pomerium_app_role_ids["belt-crew"].result
+    allowed_member_types = ["User"]
+    display_name         = "Belt Crew"
+    description          = "Scoped Proxmox VM operator access via ZTNA"
+    value                = "belt.crew"
+    enabled              = true
+  }
+
+  app_role {
+    id                   = random_uuid.pomerium_app_role_ids["belt-passenger"].result
+    allowed_member_types = ["User"]
+    display_name         = "Belt Passenger"
+    description          = "Read-only Proxmox access via ZTNA"
+    value                = "belt.passenger"
+    enabled              = true
+  }
+}
+
+resource "azuread_service_principal" "pomerium" {
+  client_id = azuread_application.pomerium.client_id
+}
+
+resource "azuread_application_password" "pomerium" {
+  application_id = azuread_application.pomerium.id
+  display_name   = "pomerium-oidc-client-secret"
+}
+
+resource "azuread_app_role_assignment" "pomerium_belt" {
+  for_each = toset(["belt-captain", "belt-crew", "belt-passenger"])
+
+  app_role_id         = random_uuid.pomerium_app_role_ids[each.key].result
+  principal_object_id = azuread_group.rbac[each.key].object_id
+  resource_object_id  = azuread_service_principal.pomerium.object_id
+}
+
+output "pomerium_client_secret" {
+  value     = azuread_application_password.pomerium.value
+  sensitive = true
+}
+
+output "pomerium_client_id" {
+  value = azuread_application.pomerium.client_id
 }

@@ -1,0 +1,32 @@
+log_level: debug
+authenticate_service_url: https://deimos.mcrn.solsys.dev
+cookie_domain: mcrn.solsys.dev
+
+certificate_file: /etc/letsencrypt/live/deimos.mcrn.solsys.dev/fullchain.pem
+certificate_key_file: /etc/letsencrypt/live/deimos.mcrn.solsys.dev/privkey.pem
+
+idp_provider: azure
+idp_client_id: {{ lookup('env', 'pomerium_entraid_client_id') | trim }}
+idp_client_secret: {{ lookup('env', 'pomerium_entraid_client_secret') | trim }}
+idp_provider_url: https://login.microsoftonline.com/0b87a43d-5640-4e22-a2f2-d13394ff6191/v2.0
+
+routes:
+  - from: https://belt.mcrn.solsys.dev
+    to:
+      - https://ceres.belt.solsys.dev:8006
+      - https://eros.belt.solsys.dev:8006
+      - https://pallas.belt.solsys.dev:8006
+    # health_checks:
+    #   - timeout: 2s
+    #     interval: 10s
+    #     unhealthy_threshold: 3
+    #     healthy_threshold: 1
+    #     http_health_check:
+    #       path: /
+
+    policy:
+      - allow:
+          or:
+            - claim/roles: "belt.captain"
+            - claim/roles: "belt.crew"
+            - claim/roles: "belt.passenger"

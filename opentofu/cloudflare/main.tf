@@ -88,3 +88,21 @@ resource "cloudflare_dns_record" "argocd_app" {
 output "dynamic_dns_record_id" {
   value = cloudflare_dns_record.dynamic.id
 }
+
+resource "cloudflare_dns_record" "belt_mcrn" {
+  zone_id = data.cloudflare_zone.solsys_dev.id
+  name    = "belt.mcrn"
+  type    = "CNAME"
+  content = "dynamic.solsys.dev"
+  ttl     = 300
+  proxied = false
+}
+
+resource "cloudflare_dns_record" "deimos_mcrn" {
+  zone_id = data.cloudflare_zone.solsys_dev.id
+  name    = "deimos.mcrn"
+  type    = "CNAME"
+  content = "dynamic.solsys.dev"
+  ttl     = 300
+  proxied = false
+}

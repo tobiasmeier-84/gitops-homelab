@@ -176,3 +176,8 @@ and needs updating to match — otherwise the docs actively mislead anyone
   OpenTofu commit to `opentofu/cloudflare/`, breaking the "deploy via
   git alone" promise for the DNS piece specifically. Watches Ingress
   resources, creates/updates Cloudflare records automatically.
+
+- **Remove Deimos's static `/etc/hosts` entries** (ceres/eros/pallas.belt.solsys.dev)
+  once proper internal DNS (Titania/Oberon, CoreDNS + Pi-hole) is built
+  and proven reliable. Currently a deliberate interim fix for the
+  router's `c-ares`-incompatible DNS relay — see ADR-0047.

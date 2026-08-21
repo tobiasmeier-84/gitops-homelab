@@ -1,0 +1,5 @@
+---
+- name: restart pomerium
+  systemd:
+    name: pomerium
+    state: restarted

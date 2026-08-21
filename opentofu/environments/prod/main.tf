@@ -204,3 +204,24 @@ module "proteus" {
     { bridge = "vmbr3", address = "10.10.40.13/24" },
   ]
 }
+
+module "deimos" {
+  source = "../../modules/proxmox-vm"
+
+  node_name      = "eros"
+  vm_id          = 220
+  name           = "deimos"
+  cpu_cores      = 1
+  memory_mb      = 2048
+  image_file_id  = proxmox_download_file.debian_eros.id
+  ssh_public_key = var.vm_ssh_public_key
+
+  disks = [
+    { datastore_id = "razorback", size = 20, interface = "scsi0" },
+  ]
+
+  network_interfaces = [
+    { bridge = "vmbr0", address = "10.10.10.34/24", gateway = "10.10.10.1" },
+    { bridge = "vmbr3", address = "10.10.40.14/24" },
+  ]
+}

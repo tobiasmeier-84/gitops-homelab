@@ -1,0 +1,110 @@
+---
+- name: Fail loudly if required secrets aren't set
+  fail:
+    msg: "pomerium_cloudflare_token / pomerium_entraid_client_secret not set — did you run 'source ~/homelab-env.sh'?"
+  when: >
+    lookup('env', 'pomerium_cloudflare_token') == "" or
+    lookup('env', 'pomerium_entraid_client_secret') == ""
+
+- name: Install prerequisites
+  apt:
+    name:
+      - curl
+      - gnupg
+      - certbot
+      - python3-certbot-dns-cloudflare
+    state: present
+    update_cache: true
+
+- name: Add Pomerium GPG key
+  ansible.builtin.get_url:
+    url: "https://dl.cloudsmith.io/public/pomerium/pomerium/gpg.6E388440B94E1407.key"
+    dest: /tmp/pomerium-gpg.key
+    mode: '0644'
+
+- name: Dearmor and install Pomerium GPG key
+  command: gpg --dearmor -o /usr/share/keyrings/pomerium-pomerium-archive-keyring.gpg /tmp/pomerium-gpg.key
+  args:
+    creates: /usr/share/keyrings/pomerium-pomerium-archive-keyring.gpg
+
+- name: Add Pomerium apt repository
+  ansible.builtin.get_url:
+    url: "https://dl.cloudsmith.io/public/pomerium/pomerium/config.deb.txt?distro=debian&codename=bookworm&component=main"
+    dest: /etc/apt/sources.list.d/pomerium-pomerium.list
+    mode: '0644'
+
+- name: Install Pomerium package
+  apt:
+    name: pomerium
+    state: present
+    update_cache: true
+
+- name: Deploy Cloudflare credentials file for certbot
+  copy:
+    content: "dns_cloudflare_api_token = {{ lookup('env', 'pomerium_cloudflare_token') | trim }}"
+    dest: /etc/pomerium-cloudflare-credentials.ini
+    mode: '0600'
+
+- name: Create certbot deploy hook to grant Pomerium access to certs
+  copy:
+    content: |
+      #!/bin/sh
+      chgrp pomerium /etc/letsencrypt/archive /etc/letsencrypt/live
+      chmod 750 /etc/letsencrypt/archive /etc/letsencrypt/live
+      chgrp pomerium /etc/letsencrypt/archive/deimos.mcrn.solsys.dev /etc/letsencrypt/live/deimos.mcrn.solsys.dev
+      chmod 750 /etc/letsencrypt/archive/deimos.mcrn.solsys.dev /etc/letsencrypt/live/deimos.mcrn.solsys.dev
+      chgrp pomerium /etc/letsencrypt/archive/deimos.mcrn.solsys.dev/privkey*.pem
+      chmod 640 /etc/letsencrypt/archive/deimos.mcrn.solsys.dev/privkey*.pem
+      systemctl restart pomerium
+    dest: /etc/letsencrypt/renewal-hooks/deploy/pomerium-permissions.sh
+    mode: '0755'
+
+- name: Obtain certificate via certbot (DNS-01)
+  command: >
+    certbot certonly --dns-cloudflare
+    --dns-cloudflare-credentials /etc/pomerium-cloudflare-credentials.ini
+    --dns-cloudflare-propagation-seconds 60
+    --non-interactive --agree-tos -m admin@solsys.dev
+    -d deimos.mcrn.solsys.dev -d belt.mcrn.solsys.dev
+    --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/pomerium-permissions.sh
+  args:
+    creates: /etc/letsencrypt/live/deimos.mcrn.solsys.dev/fullchain.pem
+
+- name: Add static hosts entries for Proxmox nodes (bypasses router's c-ares-incompatible DNS)
+  lineinfile:
+    path: /etc/hosts
+    line: "{{ item.ip }} {{ item.host }}"
+    create: true
+  loop:
+    - { ip: "10.10.10.11", host: "ceres.belt.solsys.dev" }
+    - { ip: "10.10.10.12", host: "eros.belt.solsys.dev" }
+    - { ip: "10.10.10.13", host: "pallas.belt.solsys.dev" }
+
+- name: Deploy Pomerium config
+  template:
+    src: config.yaml.j2
+    dest: /etc/pomerium/config.yaml
+    mode: '0600'
+  notify: restart pomerium
+
+- name: Create systemd override directory for Pomerium
+  file:
+    path: /etc/systemd/system/pomerium.service.d
+    state: directory
+    mode: '0755'
+
+- name: Allow Pomerium to bind privileged port 443
+  copy:
+    content: |
+      [Service]
+      AmbientCapabilities=CAP_NET_BIND_SERVICE
+    dest: /etc/systemd/system/pomerium.service.d/override.conf
+    mode: '0644'
+  notify: restart pomerium
+
+- name: Enable and start Pomerium
+  systemd:
+    name: pomerium
+    enabled: true
+    state: started
+    daemon_reload: true

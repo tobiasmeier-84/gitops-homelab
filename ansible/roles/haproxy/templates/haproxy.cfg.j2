@@ -16,7 +16,15 @@ frontend http_in
 frontend https_in
     bind {{ vrrp_ip }}:443
     mode tcp
+    tcp-request inspect-delay 5s
+    tcp-request content accept if { req.ssl_hello_type 1 }
+    use_backend deimos_mcrn if { req.ssl_sni -i belt.mcrn.solsys.dev }
+    use_backend deimos_mcrn if { req.ssl_sni -i deimos.mcrn.solsys.dev }
     default_backend rke2_ingress_tls
+
+backend deimos_mcrn
+    mode tcp
+    server deimos 10.10.40.14:443 check
 
 backend rke2_ingress
     balance roundrobin
