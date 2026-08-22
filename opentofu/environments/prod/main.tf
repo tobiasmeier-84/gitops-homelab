@@ -225,3 +225,45 @@ module "deimos" {
     { bridge = "vmbr3", address = "10.10.40.14/24" },
   ]
 }
+
+module "titania" {
+  source = "../../modules/proxmox-vm"
+
+  node_name      = "ceres"
+  vm_id          = 222
+  name           = "titania"
+  cpu_cores      = 1
+  memory_mb      = 2048
+  image_file_id  = proxmox_download_file.debian_ceres.id
+  ssh_public_key = var.vm_ssh_public_key
+
+  disks = [
+    { datastore_id = "razorback", size = 20, interface = "scsi0" },
+  ]
+
+  network_interfaces = [
+    { bridge = "vmbr0", address = "10.10.10.53/24", gateway = "10.10.10.1" },
+    { bridge = "vmbr3", address = "10.10.40.53/24" },
+  ]
+}
+
+module "oberon" {
+  source = "../../modules/proxmox-vm"
+
+  node_name      = "pallas"
+  vm_id          = 223
+  name           = "oberon"
+  cpu_cores      = 1
+  memory_mb      = 2048
+  image_file_id  = proxmox_download_file.debian_pallas.id
+  ssh_public_key = var.vm_ssh_public_key
+
+  disks = [
+    { datastore_id = "razorback", size = 20, interface = "scsi0" },
+  ]
+
+  network_interfaces = [
+    { bridge = "vmbr0", address = "10.10.10.54/24", gateway = "10.10.10.1" },
+    { bridge = "vmbr3", address = "10.10.40.54/24" },
+  ]
+}

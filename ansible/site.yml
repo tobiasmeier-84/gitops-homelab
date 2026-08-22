@@ -55,3 +55,8 @@
   hosts: deimos
   roles:
     - pomerium
+
+- name: Install CoreDNS
+  hosts: dns
+  roles:
+    - coredns

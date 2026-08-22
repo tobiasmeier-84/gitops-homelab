@@ -1,0 +1,75 @@
+---
+- name: Download CoreDNS binary
+  ansible.builtin.get_url:
+    url: "https://github.com/coredns/coredns/releases/download/v1.14.6/coredns_1.14.6_linux_amd64.tgz"
+    dest: /tmp/coredns.tgz
+    mode: '0644'
+
+- name: Disable systemd-resolved DNS stub listener
+  lineinfile:
+    path: /etc/systemd/resolved.conf
+    regexp: '^#?DNSStubListener='
+    line: 'DNSStubListener=no'
+
+- name: Restart systemd-resolved to apply stub listener change
+  systemd:
+    name: systemd-resolved
+    state: restarted
+
+- name: Point /etc/resolv.conf at a real resolver (not the now-disabled stub)
+  file:
+    src: /run/systemd/resolve/resolv.conf
+    dest: /etc/resolv.conf
+    state: link
+    force: true
+
+- name: Extract CoreDNS binary
+  ansible.builtin.unarchive:
+    src: /tmp/coredns.tgz
+    dest: /usr/local/bin
+    remote_src: true
+    creates: /usr/local/bin/coredns
+
+- name: Create coredns config directory
+  file:
+    path: /etc/coredns
+    state: directory
+    mode: '0755'
+
+- name: Deploy Corefile
+  template:
+    src: Corefile.j2
+    dest: /etc/coredns/Corefile
+    mode: '0644'
+  notify: restart coredns
+
+- name: Deploy internal hosts file
+  template:
+    src: internal-hosts.txt.j2
+    dest: /etc/coredns/internal-hosts.txt
+    mode: '0644'
+  notify: restart coredns
+
+- name: Create coredns systemd unit
+  copy:
+    content: |
+      [Unit]
+      Description=CoreDNS
+      After=network.target
+
+      [Service]
+      ExecStart=/usr/local/bin/coredns -conf /etc/coredns/Corefile
+      Restart=on-failure
+      AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+      [Install]
+      WantedBy=multi-user.target
+    dest: /etc/systemd/system/coredns.service
+    mode: '0644'
+
+- name: Enable and start CoreDNS
+  systemd:
+    name: coredns
+    enabled: true
+    state: started
+    daemon_reload: true
