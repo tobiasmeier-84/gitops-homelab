@@ -14,3 +14,11 @@ resource "null_resource" "timezone" {
     ]
   }
 }
+
+resource "proxmox_virtual_environment_dns" "nodes" {
+  for_each = toset(["ceres", "eros", "pallas"])
+
+  node_name = each.value
+  domain    = "belt.solsys.dev"
+  servers   = ["10.10.10.53", "10.10.10.54"]
+}

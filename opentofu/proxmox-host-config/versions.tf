@@ -1,13 +1,15 @@
 terraform {
   required_version = ">= 1.7.0"
-
   required_providers {
     null = {
       source  = "hashicorp/null"
       version = ">= 3.2.0"
     }
+    proxmox = {
+      source  = "bpg/proxmox"
+      version = ">= 0.66.0"
+    }
   }
-
   backend "s3" {
     bucket                      = "opentofu-state"
     key                         = "proxmox-host-config/terraform.tfstate"
@@ -18,4 +20,10 @@ terraform {
     skip_metadata_api_check     = true
     use_path_style               = true
   }
+}
+
+provider "proxmox" {
+  endpoint  = var.pve_api_endpoint
+  api_token = var.pve_api_token
+  insecure  = false
 }
