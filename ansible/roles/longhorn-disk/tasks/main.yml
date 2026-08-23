@@ -33,6 +33,21 @@
     longhorn_canterbury_device: "{{ canterbury_device_result.stdout | trim }}"
     longhorn_tachi_device: "{{ tachi_device_result.stdout | trim }}"
 
+- name: Get UUID of canterbury device
+  command: "blkid -s UUID -o value {{ longhorn_canterbury_device }}"
+  register: canterbury_uuid_result
+  changed_when: false
+
+- name: Get UUID of tachi device
+  command: "blkid -s UUID -o value {{ longhorn_tachi_device }}"
+  register: tachi_uuid_result
+  changed_when: false
+
+- name: Set UUID facts
+  set_fact:
+    longhorn_canterbury_uuid: "{{ canterbury_uuid_result.stdout | trim }}"
+    longhorn_tachi_uuid: "{{ tachi_uuid_result.stdout | trim }}"
+
 - name: Fail loudly if either device wasn't identified
   fail:
     msg: "Could not identify canterbury/tachi devices by size on {{ inventory_hostname }} — check lsblk output manually before proceeding."
@@ -60,17 +75,17 @@
     state: directory
     mode: '0755'
 
-- name: Mount canterbury disk persistently
+- name: Mount canterbury disk persistently (by UUID, immune to device letter reshuffling)
   mount:
     path: /mnt/longhorn/canterbury
-    src: "{{ longhorn_canterbury_device }}"
+    src: "UUID={{ longhorn_canterbury_uuid }}"
     fstype: ext4
     state: mounted
 
-- name: Mount tachi disk persistently
+- name: Mount tachi disk persistently (by UUID, immune to device letter reshuffling)
   mount:
     path: /mnt/longhorn/tachi
-    src: "{{ longhorn_tachi_device }}"
+    src: "UUID={{ longhorn_tachi_uuid }}"
     fstype: ext4
     state: mounted
 

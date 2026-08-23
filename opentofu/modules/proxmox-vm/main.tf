@@ -76,6 +76,11 @@ resource "proxmox_virtual_environment_vm" "this" {
   initialization {
     datastore_id = var.disks[0].datastore_id
 
+    dns {
+      servers = ["10.10.10.53", "10.10.10.54"]
+      domain  = "orbit.solsys.dev"
+    }
+
     dynamic "ip_config" {
       for_each = var.network_interfaces
       content {

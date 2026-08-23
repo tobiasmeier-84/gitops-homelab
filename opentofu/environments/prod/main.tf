@@ -243,7 +243,6 @@ module "titania" {
 
   network_interfaces = [
     { bridge = "vmbr0", address = "10.10.10.53/24", gateway = "10.10.10.1" },
-    { bridge = "vmbr3", address = "10.10.40.53/24" },
   ]
 }
 
@@ -264,6 +263,5 @@ module "oberon" {
 
   network_interfaces = [
     { bridge = "vmbr0", address = "10.10.10.54/24", gateway = "10.10.10.1" },
-    { bridge = "vmbr3", address = "10.10.40.54/24" },
   ]
 }

@@ -46,3 +46,17 @@
 - name: Set timezone to Europe/Zurich (CET/CEST, automatic DST)
   command: timedatectl set-timezone Europe/Zurich
   when: current_timezone.stdout != "Europe/Zurich"
+
+- name: Disable systemd-resolved DNS stub listener (avoid double-management conflicts)
+  lineinfile:
+    path: /etc/systemd/resolved.conf
+    regexp: '^#?DNS='
+    line: 'DNS=10.10.10.53 10.10.10.54'
+  notify: restart systemd-resolved
+
+- name: Ensure /etc/resolv.conf points at the real resolver config, not the stub
+  file:
+    src: /run/systemd/resolve/resolv.conf
+    dest: /etc/resolv.conf
+    state: link
+    force: true
