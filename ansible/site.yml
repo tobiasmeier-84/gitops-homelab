@@ -1,7 +1,7 @@
 # ansible playbook entry point — imports roles/common, roles/rke2, roles/longhorn-disk, roles/argocd-bootstrap per host group
 ---
 - name: Apply common baseline to every VM
-  hosts: all
+  hosts: all:!belt
   roles:
     - common
 
@@ -60,3 +60,8 @@
   hosts: dns
   roles:
     - coredns
+
+- name: Trust Pomerium's SSH CA on Proxmox hosts
+  hosts: belt
+  roles:
+    - proxmox-ssh-ca
