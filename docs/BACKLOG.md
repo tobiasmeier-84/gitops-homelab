@@ -181,3 +181,16 @@ and needs updating to match — otherwise the docs actively mislead anyone
   once proper internal DNS (Titania/Oberon, CoreDNS + Pi-hole) is built
   and proven reliable. Currently a deliberate interim fix for the
   router's `c-ares`-incompatible DNS relay — see ADR-0047.
+
+- **Confirm HPE Comware's actual SSH CA-certificate support** — Native
+  SSH access via Pomerium was not attempted for `medina`/`anderson`
+  after research strongly suggested (though didn't definitively
+  confirm) that Comware's SSH server only supports classic per-key
+  `public-key peer import sshkey` authentication, not OpenSSH-style
+  `TrustedUserCAKeys`/CA-signed certificates. Jump-Host mode was used
+  instead (see ADR-0045/0047), which requires no switch-side changes
+  and fully avoids this risk. If ever revisited: test on ONE switch
+  only, with confirmed console/serial access as a fallback before
+  making any change — a misconfigured SSH auth mechanism on production
+  network switches risks losing management access entirely, a more
+  severe blast radius than any VM-level mistake.

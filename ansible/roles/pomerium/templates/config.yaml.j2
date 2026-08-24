@@ -52,9 +52,26 @@ routes:
           or:
             - claim/roles: "belt.captain"
 
+  - from: ssh://medina.station.solsys.dev
+    to: ssh://medina.station.solsys.dev:22
+    policy:
+      - allow:
+          and:
+            - claim/roles: "belt.captain"
+
+  - from: ssh://anderson.station.solsys.dev
+    to: ssh://anderson.station.solsys.dev:22
+    policy:
+      - allow:
+          and:
+            - claim/roles: "belt.captain"
+
 ssh_address: 0.0.0.0:2222
 ssh_user_ca_key_file: /etc/pomerium/ssh/pomerium_user_ca_key
 ssh_host_key_files:
   - /etc/pomerium/ssh/pomerium_ssh_host_ed25519_key
   - /etc/pomerium/ssh/pomerium_ssh_host_rsa_key
   - /etc/pomerium/ssh/pomerium_ssh_host_ecdsa_key
+
+runtime_flags:
+  ssh_allow_direct_tcpip: true
