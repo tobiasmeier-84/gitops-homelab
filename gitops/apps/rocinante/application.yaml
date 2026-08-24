@@ -47,6 +47,9 @@ spec:
 
         nextcloud:
           host: rocinante.gate.solsys.dev
+          extraEnv:
+            - name: OVERWRITEPROTOCOL
+              value: "https"
 
   destination:
     server: https://kubernetes.default.svc
