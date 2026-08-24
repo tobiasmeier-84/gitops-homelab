@@ -16,13 +16,13 @@ routes:
       - https://ceres.belt.solsys.dev:8006
       - https://eros.belt.solsys.dev:8006
       - https://pallas.belt.solsys.dev:8006
-    # health_checks:
-    #   - timeout: 2s
-    #     interval: 10s
-    #     unhealthy_threshold: 3
-    #     healthy_threshold: 1
-    #     http_health_check:
-    #       path: /
+    health_checks:
+      - timeout: 2s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 1
+        http_health_check:
+          path: /
 
     policy:
       - allow:
@@ -30,3 +30,31 @@ routes:
             - claim/roles: "belt.captain"
             - claim/roles: "belt.crew"
             - claim/roles: "belt.passenger"
+
+  - from: ssh://ceres
+    to: ssh://ceres.belt.solsys.dev:22
+    policy:
+      - allow:
+          or:
+            - claim/roles: "belt.captain"
+
+  - from: ssh://eros
+    to: ssh://eros.belt.solsys.dev:22
+    policy:
+      - allow:
+          or:
+            - claim/roles: "belt.captain"
+
+  - from: ssh://pallas
+    to: ssh://pallas.belt.solsys.dev:22
+    policy:
+      - allow:
+          or:
+            - claim/roles: "belt.captain"
+
+ssh_address: 0.0.0.0:2222
+ssh_user_ca_key_file: /etc/pomerium/ssh/pomerium_user_ca_key
+ssh_host_key_files:
+  - /etc/pomerium/ssh/pomerium_ssh_host_ed25519_key
+  - /etc/pomerium/ssh/pomerium_ssh_host_rsa_key
+  - /etc/pomerium/ssh/pomerium_ssh_host_ecdsa_key

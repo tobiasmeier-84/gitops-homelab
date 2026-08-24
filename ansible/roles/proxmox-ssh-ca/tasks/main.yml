@@ -1,0 +1,28 @@
+---
+- name: Fetch Pomerium's User CA public key from Deimos
+  ansible.builtin.slurp:
+    src: /etc/pomerium/ssh/pomerium_user_ca_key.pub
+  register: pomerium_ca_pubkey
+  delegate_to: deimos
+
+- name: Deploy Pomerium's CA public key to Proxmox host
+  copy:
+    content: "{{ pomerium_ca_pubkey.content | b64decode }}"
+    dest: /etc/ssh/pomerium_user_ca_key.pub
+    owner: root
+    group: root
+    mode: '0400'
+
+- name: Configure sshd to trust Pomerium's CA
+  copy:
+    content: |
+      # Trust Pomerium's User CA for certificate authentication
+      TrustedUserCAKeys /etc/ssh/pomerium_user_ca_key.pub
+    dest: /etc/ssh/sshd_config.d/50-pomerium.conf
+    mode: '0644'
+  notify: restart sshd
+
+- name: Restart sshd
+  systemd:
+    name: ssh
+    state: restarted

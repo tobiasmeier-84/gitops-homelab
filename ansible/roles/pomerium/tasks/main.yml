@@ -93,7 +93,7 @@
     state: directory
     mode: '0755'
 
-- name: Allow Pomerium to bind privileged port 443
+- name: Allow Pomerium to bind privileged ports
   copy:
     content: |
       [Service]
@@ -108,3 +108,42 @@
     enabled: true
     state: started
     daemon_reload: true
+
+- name: Create directory for Pomerium SSH keys
+  file:
+    path: /etc/pomerium/ssh
+    state: directory
+    mode: '0700'
+    owner: pomerium
+    group: pomerium
+
+- name: Generate SSH User CA key pair
+  command: >
+    ssh-keygen -N "" -f /etc/pomerium/ssh/pomerium_user_ca_key -C "Pomerium User CA"
+  args:
+    creates: /etc/pomerium/ssh/pomerium_user_ca_key
+
+- name: Generate Pomerium SSH host key (ed25519)
+  command: >
+    ssh-keygen -N "" -t ed25519 -f /etc/pomerium/ssh/pomerium_ssh_host_ed25519_key
+  args:
+    creates: /etc/pomerium/ssh/pomerium_ssh_host_ed25519_key
+
+- name: Generate Pomerium SSH host key (rsa)
+  command: >
+    ssh-keygen -N "" -t rsa -f /etc/pomerium/ssh/pomerium_ssh_host_rsa_key
+  args:
+    creates: /etc/pomerium/ssh/pomerium_ssh_host_rsa_key
+
+- name: Generate Pomerium SSH host key (ecdsa)
+  command: >
+    ssh-keygen -N "" -t ecdsa -f /etc/pomerium/ssh/pomerium_ssh_host_ecdsa_key
+  args:
+    creates: /etc/pomerium/ssh/pomerium_ssh_host_ecdsa_key
+
+- name: Fix ownership of generated SSH keys
+  file:
+    path: /etc/pomerium/ssh
+    owner: pomerium
+    group: pomerium
+    recurse: true
