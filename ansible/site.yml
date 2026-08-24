@@ -65,3 +65,8 @@
   hosts: belt
   roles:
     - proxmox-ssh-ca
+
+- name: Trust Pomerium's SSH CA on all admin-plane VMs (except Pomerium's own dependencies)
+  hosts: ssh_gated
+  roles:
+    - proxmox-ssh-ca

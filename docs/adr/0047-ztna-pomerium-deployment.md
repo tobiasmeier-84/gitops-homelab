@@ -197,3 +197,24 @@ runtime_flags:
    This distinction isn't obvious from the documentation alone —
    diagnosed by reading Pomerium's own debug-level logs directly rather
    than guessing from the docs a second time.
+
+## Addendum: SSH access extended to all remaining VMs — Deimos/Titania/Oberon excluded as break-glass
+
+Following the Proxmox and switch rollout, Native SSH was extended to
+every remaining admin-plane VM (RKE2 nodes, HAProxy trio, `iapetus`),
+using the same CA-trust mechanism and role (`proxmox-ssh-ca`, generic
+enough to apply unchanged beyond its original Proxmox target). All
+routes: Captain-only, `admin` user (these VMs use cloud-init's default
+`admin` account, not `root` like the Proxmox hosts).
+
+**Deliberately excluded: `deimos`, `titania`, `oberon`.** These three
+host the ZTNA infrastructure itself (Pomerium; CoreDNS) or its direct
+dependencies. Gating their own SSH access behind Pomerium would create
+a genuine lockout risk — if Pomerium itself ever failed, fixing it
+would require SSH access that itself depends on Pomerium working. These
+three keep direct SSH access as a deliberate, permanent break-glass
+path, not an oversight or a temporary gap.
+
+This completes the SSH-over-ZTNA rollout — every admin-plane VM except
+the ZTNA infrastructure's own foundation is now reachable only through
+identity-verified, policy-gated Pomerium sessions.

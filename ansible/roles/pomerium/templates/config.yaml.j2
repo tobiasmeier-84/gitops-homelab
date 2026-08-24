@@ -66,6 +66,69 @@ routes:
           and:
             - claim/roles: "belt.captain"
 
+  - from: ssh://enceladus
+    to: ssh://enceladus.orbit.solsys.dev:22
+    policy:
+      - allow:
+          and:
+            - claim/roles: "belt.captain"
+            - ssh_username:
+                is: "admin"
+
+  - from: ssh://mimas
+    to: ssh://mimas.orbit.solsys.dev:22
+    policy:
+      - allow:
+          and:
+            - claim/roles: "belt.captain"
+            - ssh_username:
+                is: "admin"
+
+  - from: ssh://rhea
+    to: ssh://rhea.orbit.solsys.dev:22
+    policy:
+      - allow:
+          and:
+            - claim/roles: "belt.captain"
+            - ssh_username:
+                is: "admin"
+
+  - from: ssh://triton
+    to: ssh://triton.orbit.solsys.dev:22
+    policy:
+      - allow:
+          and:
+            - claim/roles: "belt.captain"
+            - ssh_username:
+                is: "admin"
+
+  - from: ssh://nereid
+    to: ssh://nereid.orbit.solsys.dev:22
+    policy:
+      - allow:
+          and:
+            - claim/roles: "belt.captain"
+            - ssh_username:
+                is: "admin"
+
+  - from: ssh://proteus
+    to: ssh://proteus.orbit.solsys.dev:22
+    policy:
+      - allow:
+          and:
+            - claim/roles: "belt.captain"
+            - ssh_username:
+                is: "admin"
+
+  - from: ssh://iapetus
+    to: ssh://iapetus.orbit.solsys.dev:22
+    policy:
+      - allow:
+          and:
+            - claim/roles: "belt.captain"
+            - ssh_username:
+                is: "admin"
+
 ssh_address: 0.0.0.0:2222
 ssh_user_ca_key_file: /etc/pomerium/ssh/pomerium_user_ca_key
 ssh_host_key_files:
