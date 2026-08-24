@@ -106,3 +106,12 @@ resource "cloudflare_dns_record" "deimos_mcrn" {
   ttl     = 300
   proxied = false
 }
+
+resource "cloudflare_dns_record" "rocinante_gate" {
+  zone_id = data.cloudflare_zone.solsys_dev.id
+  name    = "rocinante.gate"
+  type    = "CNAME"
+  content = "dynamic.solsys.dev"
+  ttl     = 300
+  proxied = false
+}
