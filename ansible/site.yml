@@ -70,3 +70,8 @@
   hosts: ssh_gated
   roles:
     - proxmox-ssh-ca
+
+- name: Configure Rocinante OIDC credentials
+  hosts: rke2_nodes
+  roles:
+    - rocinante-oidc-secret

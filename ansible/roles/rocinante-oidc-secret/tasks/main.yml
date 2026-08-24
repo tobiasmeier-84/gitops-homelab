@@ -1,0 +1,23 @@
+---
+- name: Fail loudly if OIDC credentials aren't set
+  fail:
+    msg: "rocinante_entraid_client_id/secret not set — did you run 'source ~/homelab-env.sh'?"
+  when: >
+    inventory_hostname == groups['rke2_nodes'][0] and
+    (lookup('env', 'rocinante_entraid_client_secret') == "" or
+     lookup('env', 'rocinante_entraid_client_id') == "")
+
+- name: Create Rocinante OIDC credentials secret
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: rocinante-oidc-credentials
+        namespace: rocinante
+      type: Opaque
+      stringData:
+        client_id: "{{ lookup('env', 'rocinante_entraid_client_id') | trim }}"
+        client_secret: "{{ lookup('env', 'rocinante_entraid_client_secret') | trim }}"
+  when: inventory_hostname == groups['rke2_nodes'][0]

@@ -1,0 +1,53 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rocinante-configure-oidc
+  namespace: rocinante
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      serviceAccountName: rocinante-oidc-configurator
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: configure
+          image: rancher/kubectl:v1.30.3
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          envFrom:
+            - secretRef:
+                name: rocinante-oidc-credentials
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              POD=$(kubectl get pods -n rocinante -l app.kubernetes.io/name=nextcloud -o jsonpath='{.items[0].metadata.name}')
+
+              echo "Waiting for Nextcloud pod to be ready..."
+              kubectl wait --for=condition=ready pod/$POD -n rocinante --timeout=180s
+
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ app:enable user_oidc" || true
+
+              # Idempotent: only create the provider if it doesn't already exist
+              if ! kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ user_oidc:provider entraid" > /dev/null 2>&1; then
+                kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ user_oidc:provider entraid --clientid='$client_id' --clientsecret='$client_secret' --discoveryuri='https://login.microsoftonline.com/0b87a43d-5640-4e22-a2f2-d13394ff6191/v2.0/.well-known/openid-configuration' --scope='openid profile email'"
+              else
+                echo "Provider 'entraid' already exists, skipping creation"
+              fi
+
+              # Idempotent: config:system:set always overwrites safely
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set trusted_domains 0 --value=rocinante.gate.solsys.dev"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set trusted_domains 1 --value=nextcloud.app.solsys.dev"
+
+              echo "Done."
