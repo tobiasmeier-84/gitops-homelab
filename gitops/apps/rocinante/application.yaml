@@ -1,0 +1,59 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rocinante
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://nextcloud.github.io/helm/
+    chart: nextcloud
+    targetRevision: "6.6.11"
+    helm:
+      values: |
+        internalDatabase:
+          enabled: false
+
+        externalDatabase:
+          enabled: true
+          type: postgresql
+          host: barbapiccola-rw.rocinante.svc.cluster.local
+          database: nextcloud
+          existingSecret:
+            enabled: true
+            secretName: barbapiccola-app
+            usernameKey: username
+            passwordKey: password
+            databaseKey: dbname
+
+        persistence:
+          enabled: true
+          storageClass: longhorn-bulk
+          size: 150Gi
+
+        ingress:
+          enabled: true
+          ingressClassName: traefik
+          annotations:
+            cert-manager.io/cluster-issuer: letsencrypt-dns
+          hosts:
+            - host: rocinante.gate.solsys.dev
+              paths:
+                - path: /
+          tls:
+            - secretName: rocinante-tls
+              hosts:
+                - rocinante.gate.solsys.dev
+
+        nextcloud:
+          host: rocinante.gate.solsys.dev
+          
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rocinante
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

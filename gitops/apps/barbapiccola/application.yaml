@@ -42,7 +42,6 @@ spec:
         - /spec/smartShutdownTimeout
         - /spec/startDelay
         - /spec/stopDelay
-        - /spec/storage/resizeInUseVolumes
         - /spec/switchoverDelay
         - /spec/bootstrap/initdb/encoding
         - /spec/bootstrap/initdb/localeCType
