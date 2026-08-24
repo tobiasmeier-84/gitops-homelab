@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rocinante-alias
+  namespace: rocinante
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-dns
+spec:
+  ingressClassName: traefik
+  tls:
+    - secretName: rocinante-alias-tls
+      hosts:
+        - nextcloud.app.solsys.dev
+  rules:
+    - host: nextcloud.app.solsys.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: rocinante-nextcloud
+                port:
+                  number: 8080
