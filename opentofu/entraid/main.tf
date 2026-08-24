@@ -44,7 +44,7 @@ locals {
   # pre-declare, and means station-/mcrn- need no renaming later once
   # they become actionable (same "reserve now" pattern as ADR-0035's
   # Earth/Mars naming space).
-  rbac_domains = ["belt", "agatha-king", "station", "mcrn"]
+  rbac_domains = ["belt", "agatha-king", "station", "mcrn", "rocinante"]
   rbac_tiers   = ["captain", "crew", "passenger"]
 
   rbac_groups = {
@@ -220,4 +220,73 @@ output "pomerium_client_secret" {
 
 output "pomerium_client_id" {
   value = azuread_application.pomerium.client_id
+}
+
+resource "random_uuid" "nextcloud_app_role_ids" {
+  for_each = toset(["rocinante-captain", "rocinante-crew", "rocinante-passenger"])
+}
+
+resource "azuread_application" "nextcloud" {
+  display_name     = "nextcloud-rocinante"
+  sign_in_audience = "AzureADMyOrg"
+
+  web {
+    redirect_uris = [
+      "https://rocinante.gate.solsys.dev/apps/user_oidc/code",
+      "https://nextcloud.app.solsys.dev/apps/user_oidc/code",
+    ]
+  }
+
+  app_role {
+    id                   = random_uuid.nextcloud_app_role_ids["rocinante-captain"].result
+    allowed_member_types = ["User"]
+    display_name         = "Rocinante Captain"
+    description          = "Full Nextcloud administrator access"
+    value                = "rocinante.captain"
+    enabled              = true
+  }
+
+  app_role {
+    id                   = random_uuid.nextcloud_app_role_ids["rocinante-crew"].result
+    allowed_member_types = ["User"]
+    display_name         = "Rocinante Crew"
+    description          = "Regular Nextcloud user access"
+    value                = "rocinante.crew"
+    enabled              = true
+  }
+
+  app_role {
+    id                   = random_uuid.nextcloud_app_role_ids["rocinante-passenger"].result
+    allowed_member_types = ["User"]
+    display_name         = "Rocinante Passenger"
+    description          = "Limited Nextcloud access"
+    value                = "rocinante.passenger"
+    enabled              = true
+  }
+}
+
+resource "azuread_service_principal" "nextcloud" {
+  client_id = azuread_application.nextcloud.client_id
+}
+
+resource "azuread_application_password" "nextcloud" {
+  application_id = azuread_application.nextcloud.id
+  display_name   = "nextcloud-oidc-client-secret"
+}
+
+resource "azuread_app_role_assignment" "nextcloud_rocinante" {
+  for_each = toset(["rocinante-captain", "rocinante-crew", "rocinante-passenger"])
+
+  app_role_id         = random_uuid.nextcloud_app_role_ids[each.key].result
+  principal_object_id = azuread_group.rbac[each.key].object_id
+  resource_object_id  = azuread_service_principal.nextcloud.object_id
+}
+
+output "nextcloud_client_secret" {
+  value     = azuread_application_password.nextcloud.value
+  sensitive = true
+}
+
+output "nextcloud_client_id" {
+  value = azuread_application.nextcloud.client_id
 }

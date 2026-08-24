@@ -40,10 +40,14 @@ spec:
             - host: rocinante.gate.solsys.dev
               paths:
                 - path: /
+            - host: nextcloud.app.solsys.dev
+              paths:
+                - path: /
           tls:
             - secretName: rocinante-tls
               hosts:
                 - rocinante.gate.solsys.dev
+                - nextcloud.app.solsys.dev
 
         nextcloud:
           host: rocinante.gate.solsys.dev
