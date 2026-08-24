@@ -125,3 +125,75 @@ VLAN can reach MGMT" rule down to "one specific known source," even
 though it isn't the full zero-exception state originally envisioned.
 Revisit only if a second person ever needs genuine service-account-style
 access (not just the current operator's own convenience).
+
+## Addendum: SSH access implemented — Native SSH for Proxmox, Jump-Host mode for switches
+
+Following the backlog item above (HPE Comware CA-certificate support
+unconfirmed), SSH access was built out for both target categories,
+using the two different mechanisms Pomerium provides — deliberately
+avoiding testing Native SSH against production switches given the risk
+profile discussed above.
+
+**Proxmox hosts (`ceres`/`eros`/`pallas`): Native SSH, Captain-only, `root` only.**
+Standard OpenSSH confirmed compatible with `TrustedUserCAKeys`. Routes
+restrict both the role claim *and* the requested username explicitly:
+```yaml
+policy:
+  - allow:
+      and:
+        - claim/roles: "belt.captain"
+        - ssh_username:
+            is: "root"
+```
+`belt.crew` was deliberately given no SSH route at all — during
+rollout, a real gap was found where a crew-tier identity could request
+`root@ceres@...` and receive full root, since Native SSH's policy only
+gates *whether a connection is permitted*, not *which username is
+requested* — that requires the explicit `ssh_username` check above.
+Crew's access model stays scoped to the Proxmox web UI (`PVEVMAdmin`)
+only; SSH was not extended to crew rather than building a limited
+Linux account to accommodate it.
+
+**Network switches (`medina`/`anderson`): Jump-Host mode, Captain-only.**
+Confirms the backlog item's caution was warranted — research strongly
+suggested Comware's SSH server only supports classic per-key
+`public-key peer import sshkey` authentication, not OpenSSH CA
+certificates. Jump-Host mode was used instead, requiring **zero
+switch-side configuration changes** — Pomerium only gates whether the
+connection attempt is permitted; the switch's own existing key-based
+auth (already in place from this project's earliest setup) handles the
+actual login. Enabled via:
+```yaml
+runtime_flags:
+  ssh_allow_direct_tcpip: true
+```
+
+## Two real configuration gotchas found during SSH rollout
+
+1. **Runtime flags require a nested key, not a bare top-level one.**
+   `ssh_allow_direct_tcpip: true` at the document root is silently
+   ignored (no error — Pomerium just doesn't apply it). Must be nested:
+```yaml
+   runtime_flags:
+     ssh_allow_direct_tcpip: true
+```
+   Inferred from a Kubernetes ingress-controller reference showing
+   `RuntimeFlags` as its own distinct field, before being confirmed
+   correct by testing — no direct authoritative Core example was found
+   for this specific structure.
+
+2. **Jump-Host mode's `-J` connection matches routes by the real
+   destination hostname, not the route's declared name.** Named routes
+   (`from: ssh://medina`) only match the `user@route@pomerium` syntax
+   used by Native SSH connections. A Jump-Host (`-J`) connection sends
+   the actual target hostname during handoff — confirmed directly via
+   Pomerium's own debug logs (`"newHostname":"medina.station.solsys.dev"`,
+   `"deny-why-true":["route-not-found"]`). Fixed by setting `from:` to
+   the real hostname:
+```yaml
+   - from: ssh://medina.station.solsys.dev
+     to: ssh://medina.station.solsys.dev:22
+```
+   This distinction isn't obvious from the documentation alone —
+   diagnosed by reading Pomerium's own debug-level logs directly rather
+   than guessing from the docs a second time.
