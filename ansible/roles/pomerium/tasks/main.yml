@@ -70,16 +70,6 @@
   args:
     creates: /etc/letsencrypt/live/deimos.mcrn.solsys.dev/fullchain.pem
 
-- name: Add static hosts entries for Proxmox nodes (bypasses router's c-ares-incompatible DNS)
-  lineinfile:
-    path: /etc/hosts
-    line: "{{ item.ip }} {{ item.host }}"
-    create: true
-  loop:
-    - { ip: "10.10.10.11", host: "ceres.belt.solsys.dev" }
-    - { ip: "10.10.10.12", host: "eros.belt.solsys.dev" }
-    - { ip: "10.10.10.13", host: "pallas.belt.solsys.dev" }
-
 - name: Deploy Pomerium config
   template:
     src: config.yaml.j2

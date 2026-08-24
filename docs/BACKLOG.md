@@ -177,10 +177,9 @@ and needs updating to match — otherwise the docs actively mislead anyone
   git alone" promise for the DNS piece specifically. Watches Ingress
   resources, creates/updates Cloudflare records automatically.
 
-- **Remove Deimos's static `/etc/hosts` entries** (ceres/eros/pallas.belt.solsys.dev)
-  once proper internal DNS (Titania/Oberon, CoreDNS + Pi-hole) is built
-  and proven reliable. Currently a deliberate interim fix for the
-  router's `c-ares`-incompatible DNS relay — see ADR-0047.
+- [x] **RESOLVED** — Deimos's `/etc/hosts` workaround removed now that
+      internal DNS (CoreDNS on Titania/Oberon) is confirmed reliable.
+      See ADR-0047.
 
 - **Confirm HPE Comware's actual SSH CA-certificate support** — Native
   SSH access via Pomerium was not attempted for `medina`/`anderson`

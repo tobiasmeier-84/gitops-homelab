@@ -85,10 +85,10 @@ implementation that are worth recording precisely.
   `belt.captain` role claim recognized, correct routing to a healthy
   Proxmox node, and Proxmox's own separate SSO also working through the
   new hostname.
-- **Backlog item**: remove Deimos's static `/etc/hosts` entries once
-  proper internal DNS (Titania/Oberon, CoreDNS + Pi-hole, per the
-  earlier DNS/filtering design discussion) is actually built and proven
-  reliable — the `/etc/hosts` entries are a deliberate interim fix, not
+- ~~Backlog item: remove Deimos's static `/etc/hosts` entries once
+  proper internal DNS is built and proven reliable~~ **RESOLVED** —
+  CoreDNS (Titania/Oberon) confirmed reliable, static entries removed,
+  Ansible task removed to prevent re-creation on future runs.
   a permanent architecture decision.
 - The router's `c-ares`-incompatible DNS behavior is worth keeping in
   mind for any *other* future service with a strict DNS resolver, not
