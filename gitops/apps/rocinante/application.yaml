@@ -8,7 +8,7 @@ spec:
   source:
     repoURL: https://nextcloud.github.io/helm/
     chart: nextcloud
-    targetRevision: "6.6.11"
+    targetRevision: "9.1.1"
     helm:
       values: |
         internalDatabase:
@@ -47,7 +47,7 @@ spec:
 
         nextcloud:
           host: rocinante.gate.solsys.dev
-          
+
   destination:
     server: https://kubernetes.default.svc
     namespace: rocinante
