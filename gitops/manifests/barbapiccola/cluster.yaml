@@ -1,0 +1,14 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: barbapiccola
+  namespace: rocinante
+spec:
+  instances: 1
+  storage:
+    size: 20Gi
+    storageClassName: longhorn-fast
+  bootstrap:
+    initdb:
+      database: nextcloud
+      owner: nextcloud
