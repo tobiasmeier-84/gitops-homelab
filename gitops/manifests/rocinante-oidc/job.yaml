@@ -41,7 +41,7 @@ spec:
 
               # Always apply desired state — occ user_oidc:provider creates OR updates,
               # so this is safe to re-run and keeps the live config from drifting
-              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ user_oidc:provider entraid --clientid='$client_id' --clientsecret='$client_secret' --discoveryuri='https://login.microsoftonline.com/0b87a43d-5640-4e22-a2f2-d13394ff6191/v2.0/.well-known/openid-configuration' --scope='openid profile email' --mapping-uid=preferred_username"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ user_oidc:provider entraid --clientid='$client_id' --clientsecret='$client_secret' --discoveryuri='https://login.microsoftonline.com/0b87a43d-5640-4e22-a2f2-d13394ff6191/v2.0/.well-known/openid-configuration' --scope='openid profile email' --mapping-uid=preferred_username --unique-uid=0"
 
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set overwrite.cli.url --value=https://rocinante.gate.solsys.dev"
 
