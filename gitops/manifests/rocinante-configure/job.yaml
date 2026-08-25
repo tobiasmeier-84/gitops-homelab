@@ -59,4 +59,11 @@ spec:
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ maintenance:repair --include-expensive"
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ db:add-missing-indices"
 
+              # Transactional file locking via Redis — safe/beneficial even single-replica
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set memcache.locking --value='\\\\OC\\\\Memcache\\\\Redis'"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set redis host --value=serrio-mal.rocinante.svc.cluster.local"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set redis port --value=6379 --type=integer"
+
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set default_phone_region --value=CH"
+
               echo "Done."

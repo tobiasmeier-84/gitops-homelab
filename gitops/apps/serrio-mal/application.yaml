@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: serrio-mal
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/tobiasmeier-84/gitops-homelab.git
+    targetRevision: master
+    path: gitops/manifests/serrio-mal
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rocinante
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
