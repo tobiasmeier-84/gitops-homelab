@@ -1,0 +1,23 @@
+---
+- name: Fail loudly if SMTP credentials aren't set
+  fail:
+    msg: "rocinante_smtp_username/password not set — did you run 'source ~/homelab-env.sh'?"
+  when: >
+    inventory_hostname == groups['rke2_nodes'][0] and
+    (lookup('env', 'rocinante_smtp_username') == "" or
+     lookup('env', 'rocinante_smtp_password') == "")
+
+- name: Create Rocinante SMTP credentials secret
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: rocinante-smtp-credentials
+        namespace: rocinante
+      type: Opaque
+      stringData:
+        smtp_username: "{{ lookup('env', 'rocinante_smtp_username') | trim }}"
+        smtp_password: "{{ lookup('env', 'rocinante_smtp_password') | trim }}"
+  when: inventory_hostname == groups['rke2_nodes'][0]
