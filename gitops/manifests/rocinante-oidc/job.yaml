@@ -47,7 +47,8 @@ spec:
               fi
 
               # Idempotent: config:system:set always overwrites safely
-              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set trusted_domains 0 --value=rocinante.gate.solsys.dev"
-              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set trusted_domains 1 --value=nextcloud.app.solsys.dev"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set trusted_domains 0 --value=localhost"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set trusted_domains 1 --value=rocinante.gate.solsys.dev"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set trusted_domains 2 --value=nextcloud.app.solsys.dev"
 
               echo "Done."
