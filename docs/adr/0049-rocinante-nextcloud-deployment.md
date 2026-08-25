@@ -89,3 +89,20 @@ this pattern, not a new mechanism.
 - User's own account data migration from the existing
   `nextcloud.topadata.ch` instance is a deliberately separate, manual,
   user-driven process — not automated as part of this build.
+
+## Addendum: 15-hour outage caused by trusted_domains index confusion
+
+An initial manual fix (`trusted_domains 0 --value=rocinante.gate.solsys.dev`,
+`trusted_domains 1 --value=nextcloud.app.solsys.dev`) silently overwrote
+index 0's existing `localhost` entry rather than appending — `localhost`
+is needed internally (health probes, CLI) and its removal caused
+Nextcloud's own trusted-domain check to reject all traffic, including
+`kube-probe` health checks, resulting in a sustained `CrashLoopBackOff`
+that went unnoticed for roughly 15 hours (spanning a work break). The
+same incorrect two-index assumption was carried into the OIDC
+post-sync Job's own script, meaning every future sync would have
+reintroduced the same failure. Root cause diagnosed by mounting the
+Nextcloud PVC read-only into a stable debug pod (bypassing the crash
+loop entirely) and reading `config.php` directly — confirmed `localhost`
+was missing from the trusted domains array. Fixed by always setting
+all three indices explicitly, with `localhost` fixed at index 0.
