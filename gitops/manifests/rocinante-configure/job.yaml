@@ -27,6 +27,8 @@ spec:
           envFrom:
             - secretRef:
                 name: rocinante-oidc-credentials
+            - secretRef:
+                name: rocinante-smtp-credentials
           command:
             - /bin/sh
             - -c
@@ -69,5 +71,19 @@ spec:
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set redis port --value=6379 --type=integer"
 
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set default_phone_region --value=CH"
+
+              # Email/SMTP via Cyon — password passed via env var + base64,
+              # avoiding both plaintext-in-git and shell-history/process-list exposure
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set mail_smtpmode --value=smtp"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set mail_smtphost --value=mail.cyon.ch"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set mail_smtpport --value=465 --type=integer"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set mail_smtpsecure --value=ssl"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set mail_smtpauth --value=1 --type=boolean"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set mail_smtpname --value=$smtp_username"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set mail_from_address --value=nextcloud"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set mail_domain --value=solsys.dev"
+
+              SMTP_PASS_B64=$(printf '%s' "$smtp_password" | base64)
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set mail_smtppassword --value=\$(echo $SMTP_PASS_B64 | base64 -d)"
 
               echo "Done."
