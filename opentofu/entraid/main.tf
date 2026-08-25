@@ -88,7 +88,8 @@ resource "random_uuid" "app_role_ids" {
 }
 
 resource "azuread_service_principal" "proxmox_homelab" {
-  client_id = azuread_application.proxmox_homelab.client_id
+  client_id                    = azuread_application.proxmox_homelab.client_id
+  app_role_assignment_required = true
 }
 
 resource "azuread_app_role_assignment" "belt" {
@@ -138,7 +139,8 @@ resource "azuread_application" "argocd" {
 }
 
 resource "azuread_service_principal" "argocd" {
-  client_id = azuread_application.argocd.client_id
+  client_id                    = azuread_application.argocd.client_id
+  app_role_assignment_required = true
 }
 
 resource "azuread_application_password" "argocd" {
@@ -197,7 +199,8 @@ resource "azuread_application" "pomerium" {
 }
 
 resource "azuread_service_principal" "pomerium" {
-  client_id = azuread_application.pomerium.client_id
+  client_id                    = azuread_application.pomerium.client_id
+  app_role_assignment_required = true
 }
 
 resource "azuread_application_password" "pomerium" {
@@ -266,7 +269,8 @@ resource "azuread_application" "nextcloud" {
 }
 
 resource "azuread_service_principal" "nextcloud" {
-  client_id = azuread_application.nextcloud.client_id
+  client_id                    = azuread_application.nextcloud.client_id
+  app_role_assignment_required = true
 }
 
 resource "azuread_application_password" "nextcloud" {
@@ -289,4 +293,9 @@ output "nextcloud_client_secret" {
 
 output "nextcloud_client_id" {
   value = azuread_application.nextcloud.client_id
+}
+
+resource "azuread_group_member" "admin_rocinante_captain" {
+  group_object_id  = azuread_group.rbac["rocinante-captain"].object_id
+  member_object_id = data.azuread_user.admin.object_id
 }
