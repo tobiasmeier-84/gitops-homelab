@@ -166,3 +166,66 @@ same philosophy behind Deimos/Titania/Oberon's direct-SSH exception
 trouble, this local account provides a way in that doesn't depend on
 the systems being troubleshot. The operator changed its password from
 the auto-generated default upon discovery.
+
+## Addendum: post-upgrade hardening (34.0.2), Serrio Mal (Redis) added
+
+Following the successful chart-managed upgrade from Nextcloud 33.0.4 to
+34.0.2 (chart 9.1.1 → 9.2.6, a single supported major-version step,
+performed with no real user data at risk yet — a deliberate low-risk
+validation of the GitOps upgrade path before it actually mattered),
+the admin panel's security/setup warnings were worked through
+systematically:
+
+**Fixed via `rocinante-configure` (renamed from `rocinante-oidc`, its
+scope having grown well beyond OIDC alone):**
+- `trusted_proxies`/`forwarded_for_headers` — real security fix, scoped
+  to the actual pod network (`10.42.0.0/16`), required since Traefik
+  terminates real HTTPS and Nextcloud only ever sees plain HTTP
+  internally.
+- `maintenance_window_start` — set to 01:00 UTC.
+- `occ maintenance:repair --include-expensive` and
+  `occ db:add-missing-indices` — safe, idempotent one-time repairs.
+- `default_phone_region` — set to `CH`.
+- Transactional file locking via Redis (see below).
+
+**Fixed via a Traefik `Middleware`, not Nextcloud config:** HSTS.
+Deliberately placed at the ingress layer rather than inside Nextcloud
+itself, since Traefik is what terminates the real HTTPS connection —
+setting this inside the application would have been ineffective at
+best.
+
+**New workload: Serrio Mal (Redis)**, added specifically for
+transactional file locking — genuinely beneficial even with Nextcloud
+running as a single replica (moves lock contention off the database),
+distinct from the harder prerequisites (RWX storage, shared session
+cache) that true multi-replica scaling would need and which remain
+deliberately out of scope. Named following the same "Belter faction =
+supporting infrastructure for Rocinante" pattern as Barbapiccola.
+Deployed as a plain `Deployment` (no persistence needed — lock state
+loss on restart is harmless, locks simply get re-acquired).
+
+**Left deliberately unconfigured, each for a specific reason:**
+- AppAPI deploy daemon — only relevant if installing External Apps;
+  not currently needed.
+- Second factor enforcement — login already goes through Entra ID's
+  own authentication (which may already enforce its own MFA via
+  Security Defaults); enforcing Nextcloud's separate 2FA on top would
+  need a deliberate decision, not a default-on.
+- Email server config — needs real SMTP credentials, can't be set
+  without operator input.
+- Configuration server ID — explicitly for multi-PHP-server
+  deployments; not applicable to this single-replica setup.
+
+## A real, recurring lesson: nested shell escaping through multiple layers is unreliable
+
+Setting `memcache.locking` to the literal value `\OC\Memcache\Redis`
+required passing through four layers of shell interpretation (the
+Job's own `sh -c`, `kubectl exec`, the pod's `su -c`, and PHP's own
+argument parsing). Naive backslash-escaping proved genuinely
+unpredictable in live testing — one attempt with 8 backslashes
+produced 2 stored, a different attempt with 6 also produced 2, not the
+clean mathematical relationship expected. **Fixed by base64-encoding
+the value locally and decoding it only once at the final destination**
+— a technique worth reusing for any future value that needs to survive
+multiple nested shell layers, rather than attempting to calculate the
+"correct" escape count by hand.
