@@ -5,6 +5,7 @@ metadata:
   namespace: rocinante
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-dns
+    traefik.ingress.kubernetes.io/router.middlewares: rocinante-hsts@kubernetescrd
 spec:
   ingressClassName: traefik
   tls:

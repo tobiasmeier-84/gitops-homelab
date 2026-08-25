@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: rocinante-configure-oidc
+  name: rocinante-configure
   namespace: rocinante
   annotations:
     argocd.argoproj.io/hook: PostSync
@@ -39,8 +39,6 @@ spec:
 
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ app:enable user_oidc" || true
 
-              # Always apply desired state — occ user_oidc:provider creates OR updates,
-              # so this is safe to re-run and keeps the live config from drifting
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ user_oidc:provider entraid --clientid='$client_id' --clientsecret='$client_secret' --discoveryuri='https://login.microsoftonline.com/0b87a43d-5640-4e22-a2f2-d13394ff6191/v2.0/.well-known/openid-configuration' --scope='openid profile email' --mapping-uid=preferred_username --unique-uid=0"
 
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set overwrite.cli.url --value=https://rocinante.gate.solsys.dev"
@@ -48,5 +46,17 @@ spec:
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set trusted_domains 0 --value=localhost"
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set trusted_domains 1 --value=rocinante.gate.solsys.dev"
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set trusted_domains 2 --value=nextcloud.app.solsys.dev"
+
+              # Trust Traefik's forwarded headers, scoped to the actual pod network —
+              # required since Traefik terminates real HTTPS, Nextcloud only ever sees plain HTTP internally
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set trusted_proxies 0 --value=10.42.0.0/16"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set forwarded_for_headers 0 --value=HTTP_X_FORWARDED_FOR"
+
+              # Low-usage maintenance window (01:00 UTC)
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set maintenance_window_start --value=1"
+
+              # Safe, idempotent one-time repairs
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ maintenance:repair --include-expensive"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ db:add-missing-indices"
 
               echo "Done."
