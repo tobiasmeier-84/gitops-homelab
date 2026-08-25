@@ -90,7 +90,7 @@ this pattern, not a new mechanism.
   `nextcloud.topadata.ch` instance is a deliberately separate, manual,
   user-driven process — not automated as part of this build.
 
-## Addendum: 15-hour outage caused by trusted_domains index confusion
+## Addendum: trusted_domains index confusion
 
 An initial manual fix (`trusted_domains 0 --value=rocinante.gate.solsys.dev`,
 `trusted_domains 1 --value=nextcloud.app.solsys.dev`) silently overwrote
@@ -106,3 +106,63 @@ Nextcloud PVC read-only into a stable debug pod (bypassing the crash
 loop entirely) and reading `config.php` directly — confirmed `localhost`
 was missing from the trusted domains array. Fixed by always setting
 all three indices explicitly, with `localhost` fixed at index 0.
+
+## Addendum: OIDC configured, login confirmed working
+
+Following the earlier decision to scope OIDC to authentication only
+(not automatic admin-group provisioning, given confirmed real-world
+reliability issues with `user_oidc`'s group provisioning against
+Nextcloud's built-in `admin` group), the ArgoCD post-sync Job
+(`gitops/apps/rocinante-oidc/`) successfully configured the `entraid`
+OIDC provider. End-to-end login via Entra ID confirmed working. Admin
+rights for the Captain-tier operator were granted manually via a
+one-time `occ group:adduser admin <username>` command, consistent with
+the deliberately smaller, more reliable scope chosen over automatic
+provisioning.
+
+## Addendum: OIDC configured, login confirmed working
+
+Following the earlier decision to scope OIDC to authentication only
+(not automatic admin-group provisioning, given confirmed real-world
+reliability issues with `user_oidc`'s group provisioning against
+Nextcloud's built-in `admin` group), the ArgoCD post-sync Job
+(`gitops/apps/rocinante-oidc/`) successfully configured the `entraid`
+OIDC provider. End-to-end login via Entra ID confirmed working.
+
+**Granting admin rights is a deliberate manual step, not automated:**
+```bash
+POD=$(kubectl get pod -n rocinante -l app.kubernetes.io/name=nextcloud -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c 'php occ group:adduser admin <username>'
+```
+Consistent with the deliberately smaller, more reliable scope chosen
+over automatic provisioning — a one-time action for a single-operator
+home lab, not worth automating given the confirmed unreliability of
+the alternative.
+
+## Addendum: --unique-uid=0 required alongside --mapping-uid
+
+Setting `--mapping-uid=preferred_username` alone was **not** sufficient
+to get a readable username — `user_oidc` has a separate `uniqueUid`
+setting (default `true`) that silently takes precedence, generating an
+opaque SHA-256-style hash as the actual account ID regardless of the
+UID mapping claim. The display name and email correctly reflected the
+mapped claims the whole time, masking the fact that the underlying
+`user_id` was still the wrong value — only visible via `occ
+user_oidc:provider entraid`'s own JSON output, not from the login flow
+itself. Confirmed the hard way: two full login attempts, plus a pod
+restart to rule out config caching, before finding the actual second
+flag. Fixed by adding `--unique-uid=0` alongside `--mapping-uid`.
+
+## Addendum: the chart's own bootstrap admin account is a legitimate break-glass path
+
+While troubleshooting, discovered the Nextcloud Helm chart auto-creates
+a local `admin` account with a randomly generated password on first
+install (retrievable via the `rocinante-nextcloud` Secret's
+`nextcloud-password` key) — independent of OIDC/Entra ID entirely.
+Rather than treat this as an oversight to remove, it's being kept
+deliberately as a genuine break-glass login path — consistent with the
+same philosophy behind Deimos/Titania/Oberon's direct-SSH exception
+(ADR-0047): if Pomerium, Entra ID, or the OIDC provider config ever has
+trouble, this local account provides a way in that doesn't depend on
+the systems being troubleshot. The operator changed its password from
+the auto-generated default upon discovery.
