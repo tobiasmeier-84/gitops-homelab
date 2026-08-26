@@ -128,3 +128,75 @@ tension a genuine security asset rather than a risk.
   providers (Scaleway, a Swiss provider, Alibaba Cloud, and reusing
   the existing Azure tenant for the 4th role) before this design can
   actually be implemented.
+
+## Addendum: archive-tier storage abandoned in favor of "hot" storage with no minimum duration
+
+**Status of this addendum:** Supersedes the earlier "four countries, archive-tier"
+revision. The core security property — no single company ever holds
+both a chain's data and its key — remains unchanged.
+
+### Why archive tiers were abandoned
+
+Real, verified pricing research found that every true archive/cold-storage
+tier (AWS Glacier Deep Archive, Azure Archive, OVHcloud Cold Archive,
+Scaleway Glacier, Alibaba Deep Cold Archive) imposes a **minimum storage
+duration before an object becomes eligible for cheap pricing, and/or a
+minimum storage duration once archived** (Scaleway: 90 days before
+transition; OVHcloud: 30 days before transition + 180 days once archived;
+AWS/Alibaba: 180 days; Google: 365 days). These penalties are specifically
+designed around infrequent-access-but-long-lived data — they interact
+badly with a genuinely small-scale (~140GB), infrequently-recovered
+(once-per-decade) personal backup, where the "savings" from cheap
+archive-tier per-GB pricing are outweighed by paying full-price Standard
+tier rates during the mandatory pre-transition window, especially under
+any reasonable retention/rotation schedule.
+
+### The correct fit for this specific use case: "hot" storage with zero minimum duration
+
+**Cloudflare R2** ($0.015/GB/month, confirmed zero egress fees at any
+volume, no minimum duration, negligible per-request operation costs) and
+**Backblaze B2** ($6.95/TB/month, confirmed no minimum storage duration —
+*"you can delete data at any time without penalty"* — free egress up to
+3× average monthly storage) both eliminate the exact penalty structure
+that made archive tiers a poor fit at this scale. Verified: ingress
+(upload) is free on both providers, and industry-wide — OVHcloud's
+"Cloud Archive" per-GB ingress fee (a different product from "Cold
+Archive," confirmed as a real source of earlier confusion) is a genuine
+outlier, not the norm.
+
+### Final design
+
+- **Chain A**: data → Cloudflare R2, key → Azure Key Vault
+- **Chain B**: data → Backblaze B2, key → Bitwarden Secrets Manager
+- **Retention**: 2 live copies per chain, replaced on each run — safe
+  and cost-free given neither provider penalizes early deletion, unlike
+  every archive-tier option evaluated.
+- **Real, verified annual cost**: ~$75/year combined (R2: ~$50/year,
+  B2: ~$23/year, key storage: negligible, test-restores: effectively
+  free given both providers' generous/zero egress terms) — comfortably
+  under the ~$90-100/year target.
+
+### Jurisdictional diversity: explicitly and deliberately abandoned
+
+Cloudflare, Backblaze, Microsoft (Azure Key Vault), and Bitwarden Inc.
+are all US-domiciled companies — every leg of this design sits under
+the same legal framework (US CLOUD Act). This was a deliberate,
+informed trade-off: cost was explicitly prioritized over jurisdictional
+diversity once real numbers showed the four-country design would have
+cost meaningfully more, and the operator confirmed this trade-off
+directly after being shown the real cost-vs-jurisdiction choice. The
+data≠key separation still protects against a single company's internal
+breach or insider threat — just not against coordinated US
+government legal compulsion across all four providers simultaneously,
+which was the original, now-deprioritized concern.
+
+### Lesson worth keeping in mind for any future storage decision
+
+Archive/cold-storage tiers are not automatically the cost-optimal
+choice — their entire pricing model is built around a specific access
+pattern (large volumes, genuinely rare access, long retention) that
+doesn't automatically apply just because "recovery is rare." At small
+scale with flexible retention, a well-chosen "hot" tier with no
+minimum-duration penalty and low/zero egress can be meaningfully
+cheaper. Worth genuinely comparing both, as was done here, rather than
+assuming "archive tier = cheaper" by default.
