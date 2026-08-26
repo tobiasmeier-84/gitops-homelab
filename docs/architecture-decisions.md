@@ -74,3 +74,4 @@ The single governing principle across every decision in this document: **if this
 | Cluster/GitOps | Self-hosted IaC CI/CD pipeline (design only) | GitHub Actions runner, dedicated SOPS key, approval gate | [0048](adr/0048-iac-pipeline-architecture.md) |
 | Applications | Rocinante (Nextcloud) first deployment | CloudNativePG, real mistakes caught, PSA exemption | [0049](adr/0049-rocinante-nextcloud-deployment.md) |
 | Security | Require App Role assignment on all Service Principals | Real gap: any tenant user could authenticate, verified fix with test identity | [0050](adr/0050-entra-id-app-role-assignment-required.md) |
+| Network | Router replacement (RV320 → MikroTik) | Faithful config translation, WireGuard migration, IPv6 disabled | [0051](adr/0051-mikrotik-router-replacement.md) |
