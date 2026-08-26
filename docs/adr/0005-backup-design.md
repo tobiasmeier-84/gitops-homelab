@@ -200,3 +200,46 @@ scale with flexible retention, a well-chosen "hot" tier with no
 minimum-duration penalty and low/zero egress can be meaningfully
 cheaper. Worth genuinely comparing both, as was done here, rather than
 assuming "archive tier = cheaper" by default.
+
+## Addendum: final provider selection — cost-optimal AND partial jurisdictional diversity
+
+**Status of this addendum:** Supersedes the "all-US" revision immediately
+prior. The core security property is unchanged.
+
+### One more verification pass, at the operator's request
+
+Before finalizing an all-US design, a final check specifically asked:
+is there a genuinely cost-competitive EU or Chinese alternative when
+ingress, storage, AND egress are all properly accounted for together?
+
+**Finding: yes.** OVHcloud's plain **Standard Object Storage** tier
+(not "Cold Archive," not "Cloud Archive" — the ordinary, no-strings
+tier) was confirmed, from OVHcloud's own official pricing table:
+**$0.0081/GB/month storage, free ingress AND egress, no minimum
+storage duration.** This is genuinely cheaper than Cloudflare R2
+($0.015/GB) — not a tradeoff between cost and jurisdiction, an
+improvement on both simultaneously, since OVH SAS is a French company.
+
+No equally strong Chinese alternative was found — Alibaba's confirmed
+pricing includes real, non-trivial egress fees, unlike the free/near-
+free egress on OVHcloud Standard, R2, and B2, making it a worse fit
+for actual restore cost despite cheap storage.
+
+### Final design
+
+- **Chain A**: data → OVHcloud Standard Object Storage (Paris),
+  key → Azure Key Vault
+- **Chain B**: data → Backblaze B2, key → Bitwarden Secrets Manager
+- **Retention**: 2 live copies per chain, replaced on each backup run
+- **Real, verified annual cost**: ~$50-52/year combined — below every
+  prior estimate, while also restoring genuine jurisdictional
+  diversity on one full chain (France vs. the remaining three US-
+  domiciled legs), at zero cost premium.
+
+### Lesson worth keeping for future provider decisions
+
+The "cost vs. jurisdiction" tradeoff assumed earlier in this whole
+process turned out to be partially false — assuming a non-US option
+must cost more is itself an unverified assumption, and it was wrong
+here. Worth checking real numbers before accepting a tradeoff as given,
+even after a design otherwise feels finalized.
