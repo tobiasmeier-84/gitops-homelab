@@ -21,7 +21,7 @@ terraform {
 }
 
 provider "routeros" {
-  hosturl  = "https://192.168.88.1"
+  hosturl  = "https://192.168.11.1"
   username = "admin"
   password = var.router_password
   insecure = true

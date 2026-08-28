@@ -212,7 +212,7 @@ module "deimos" {
   vm_id          = 220
   name           = "deimos"
   cpu_cores      = 1
-  memory_mb      = 2048
+  memory_mb      = 4096
   image_file_id  = proxmox_download_file.debian_eros.id
   ssh_public_key = var.vm_ssh_public_key
 

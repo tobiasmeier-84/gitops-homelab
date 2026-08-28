@@ -92,3 +92,13 @@ being disabled entirely on the new router.
 - Not yet done: translating this confirmed target state into literal
   RouterOS firewall/VLAN/NAT syntax, and planning the actual physical
   cutover with a genuine rollback path.
+
+## Addendum: bootstrap in progress
+
+Router successfully bootstrapped to a minimal working state (bridge +
+VLAN 1 only, single port, confirmed working end-to-end). Full bootstrap
+procedure, exact commands, and real gotchas encountered are documented
+in `opentofu/medina/README.md`, kept alongside the actual
+implementation rather than duplicated here. Remaining work (additional
+ports, deferred VLANs, firewall, NAT, WireGuard, OpenTofu import of the
+manually-created state) tracked there too.
