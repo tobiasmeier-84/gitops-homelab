@@ -9,10 +9,11 @@ resource "routeros_interface_bridge_port" "lan_ports" {
   interface = each.value
 }
 
+# VLAN 1 — client network
 resource "routeros_interface_bridge_vlan" "vlan1" {
   bridge   = routeros_interface_bridge.lan.name
   vlan_ids = ["1"]
-  untagged = ["ether3", "ether4", "ether5", "ether6", "ether7", "ether8"]
+  untagged = ["ether2", "ether3", "ether4", "ether5", "ether6", "ether7", "ether8"]
 }
 
 resource "routeros_interface_vlan" "vlan1" {
@@ -29,7 +30,7 @@ resource "routeros_ip_address" "vlan1" {
 resource "routeros_interface_bridge_vlan" "vlan60" {
   bridge   = routeros_interface_bridge.lan.name
   vlan_ids = ["60"]
-  # deliberately no untagged/tagged ports — inert until migration
+  tagged   = ["ether2"]
 }
 
 resource "routeros_interface_vlan" "vlan60" {
@@ -52,6 +53,7 @@ resource "routeros_interface_list_member" "vlan60_lan" {
 resource "routeros_interface_bridge_vlan" "vlan10" {
   bridge   = routeros_interface_bridge.lan.name
   vlan_ids = ["10"]
+  tagged   = ["ether2"]
 }
 resource "routeros_interface_vlan" "vlan10" {
   interface = routeros_interface_bridge.lan.name
@@ -71,6 +73,7 @@ resource "routeros_interface_list_member" "vlan10_lan" {
 resource "routeros_interface_bridge_vlan" "vlan20" {
   bridge   = routeros_interface_bridge.lan.name
   vlan_ids = ["20"]
+  tagged   = ["ether2"]
 }
 resource "routeros_interface_vlan" "vlan20" {
   interface = routeros_interface_bridge.lan.name
@@ -90,6 +93,7 @@ resource "routeros_interface_list_member" "vlan20_lan" {
 resource "routeros_interface_bridge_vlan" "vlan30" {
   bridge   = routeros_interface_bridge.lan.name
   vlan_ids = ["30"]
+  tagged   = ["ether2"]
 }
 resource "routeros_interface_vlan" "vlan30" {
   interface = routeros_interface_bridge.lan.name
@@ -109,6 +113,7 @@ resource "routeros_interface_list_member" "vlan30_lan" {
 resource "routeros_interface_bridge_vlan" "vlan40" {
   bridge   = routeros_interface_bridge.lan.name
   vlan_ids = ["40"]
+  tagged   = ["ether2"]
 }
 resource "routeros_interface_vlan" "vlan40" {
   interface = routeros_interface_bridge.lan.name
@@ -128,6 +133,7 @@ resource "routeros_interface_list_member" "vlan40_lan" {
 resource "routeros_interface_bridge_vlan" "vlan50" {
   bridge   = routeros_interface_bridge.lan.name
   vlan_ids = ["50"]
+  tagged   = ["ether2"]
 }
 resource "routeros_interface_vlan" "vlan50" {
   interface = routeros_interface_bridge.lan.name
