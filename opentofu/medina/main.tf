@@ -321,3 +321,45 @@ resource "routeros_ip_firewall_nat" "nat_pomerium_ssh" {
   to_ports         = "2222"
   comment          = "Deimos/Pomerium SSH"
 }
+
+resource "routeros_interface_wireguard" "roadwarrior" {
+  name        = "wireguard1"
+  listen_port = 13231
+}
+
+output "wireguard_router_public_key" {
+  value = routeros_interface_wireguard.roadwarrior.public_key
+}
+
+resource "routeros_interface_wireguard_peer" "mac" {
+  interface       = routeros_interface_wireguard.roadwarrior.name
+  public_key      = "wQwfAzNw8HwJsfFnEl+sHqylmokYn6grIbfWRnnIb0g="
+  allowed_address = ["172.31.0.2/32"]
+  comment         = "Tobias's Mac"
+}
+
+resource "routeros_interface_wireguard_peer" "iphone" {
+  interface       = routeros_interface_wireguard.roadwarrior.name
+  public_key      = "OtAi/dO0sb4Dqlzj+6tyReJoXujQekw2XG8LTpspEEg="
+  allowed_address = ["172.31.0.3/32"]
+  comment         = "Tobias's iPhone"
+}
+
+resource "routeros_ip_address" "wireguard" {
+  address   = "172.31.0.1/24"
+  interface = routeros_interface_wireguard.roadwarrior.name
+}
+
+resource "routeros_interface_list_member" "wireguard_lan" {
+  list      = "LAN"
+  interface = routeros_interface_wireguard.roadwarrior.name
+}
+
+resource "routeros_firewall_filter" "allow_wireguard" {
+  chain       = "input"
+  action      = "accept"
+  protocol    = "udp"
+  dst_port    = "13231"
+  place_before = "*5"
+  comment     = "WireGuard — necessary exception to input-chain deferral, VPN cannot function without this"
+}
