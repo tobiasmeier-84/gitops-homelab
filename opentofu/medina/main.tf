@@ -142,3 +142,138 @@ resource "routeros_interface_list_member" "vlan50_lan" {
   list      = "LAN"
   interface = routeros_interface_vlan.vlan50.name
 }
+
+resource "routeros_firewall_filter" "drop_forward" {
+  chain   = "forward"
+  action  = "drop"
+  comment = "Default deny — must remain the last forward rule"
+}
+
+resource "routeros_firewall_filter" "allow_dns" {
+  chain        = "forward"
+  action       = "accept"
+  dst_address  = "10.10.10.53-10.10.10.54"
+  dst_port     = "53"
+  protocol     = "udp"
+  place_before = routeros_firewall_filter.drop_forward.id
+  comment      = "Titania/Oberon DNS"
+}
+
+resource "routeros_firewall_filter" "allow_dns_tcp" {
+  chain        = "forward"
+  action       = "accept"
+  dst_address  = "10.10.10.53-10.10.10.54"
+  dst_port     = "53"
+  protocol     = "tcp"
+  place_before = routeros_firewall_filter.drop_forward.id
+  comment      = "Titania/Oberon DNS (TCP)"
+}
+
+resource "routeros_firewall_filter" "allow_ssh_dns_hosts" {
+  chain        = "forward"
+  action       = "accept"
+  dst_address  = "10.10.10.53-10.10.10.54"
+  dst_port     = "22"
+  protocol     = "tcp"
+  place_before = routeros_firewall_filter.drop_forward.id
+  comment      = "SSH to Titania/Oberon"
+}
+
+resource "routeros_firewall_filter" "allow_https_haproxy" {
+  chain        = "forward"
+  action       = "accept"
+  dst_address  = "10.10.40.10"
+  dst_port     = "443"
+  protocol     = "tcp"
+  place_before = routeros_firewall_filter.drop_forward.id
+  comment      = "HAProxy VRRP floating IP HTTPS"
+}
+
+resource "routeros_firewall_filter" "allow_http_haproxy" {
+  chain        = "forward"
+  action       = "accept"
+  dst_address  = "10.10.40.10"
+  dst_port     = "80"
+  protocol     = "tcp"
+  place_before = routeros_firewall_filter.drop_forward.id
+  comment      = "HAProxy VRRP floating IP HTTP"
+}
+
+resource "routeros_firewall_filter" "allow_ping" {
+  chain        = "forward"
+  action       = "accept"
+  dst_address  = "10.10.10.1-10.10.10.254"
+  protocol     = "icmp"
+  place_before = routeros_firewall_filter.drop_forward.id
+  comment      = "MGMT subnet diagnostics"
+}
+
+resource "routeros_firewall_filter" "allow_ssh_haproxy_trio" {
+  chain        = "forward"
+  action       = "accept"
+  dst_address  = "10.10.10.31-10.10.10.34"
+  dst_port     = "22"
+  protocol     = "tcp"
+  place_before = routeros_firewall_filter.drop_forward.id
+  comment      = "SSH to HAProxy trio + Deimos"
+}
+
+resource "routeros_firewall_filter" "allow_ssh_rke2" {
+  chain        = "forward"
+  action       = "accept"
+  dst_address  = "10.10.10.41-10.10.10.43"
+  dst_port     = "22"
+  protocol     = "tcp"
+  place_before = routeros_firewall_filter.drop_forward.id
+  comment      = "SSH to RKE2 nodes"
+}
+
+resource "routeros_firewall_filter" "allow_minio" {
+  chain        = "forward"
+  action       = "accept"
+  dst_address  = "10.10.10.24"
+  dst_port     = "9000"
+  protocol     = "tcp"
+  place_before = routeros_firewall_filter.drop_forward.id
+  comment      = "MinIO (iapetus)"
+}
+
+resource "routeros_firewall_filter" "allow_ssh_iapetus" {
+  chain        = "forward"
+  action       = "accept"
+  dst_address  = "10.10.10.24"
+  dst_port     = "22"
+  protocol     = "tcp"
+  place_before = routeros_firewall_filter.drop_forward.id
+  comment      = "SSH to iapetus"
+}
+
+resource "routeros_firewall_filter" "allow_ssh_proxmox" {
+  chain        = "forward"
+  action       = "accept"
+  dst_address  = "10.10.10.11-10.10.10.13"
+  dst_port     = "22"
+  protocol     = "tcp"
+  place_before = routeros_firewall_filter.drop_forward.id
+  comment      = "SSH to Proxmox hosts"
+}
+
+resource "routeros_firewall_filter" "allow_pve_admin" {
+  chain        = "forward"
+  action       = "accept"
+  dst_address  = "10.10.10.11-10.10.10.13"
+  dst_port     = "8006"
+  protocol     = "tcp"
+  place_before = routeros_firewall_filter.drop_forward.id
+  comment      = "Proxmox admin UI"
+}
+
+resource "routeros_firewall_filter" "allow_ssh_switches" {
+  chain        = "forward"
+  action       = "accept"
+  dst_address  = "10.10.10.2-10.10.10.3"
+  dst_port     = "22"
+  protocol     = "tcp"
+  place_before = routeros_firewall_filter.drop_forward.id
+  comment      = "SSH to switches (tycho, anderson)"
+}
