@@ -59,6 +59,13 @@ routes:
           and:
             - claim/roles: "belt.captain"
 
+  - from: ssh://tycho.station.solsys.dev
+    to: ssh://tycho.station.solsys.dev:22
+    policy:
+      - allow:
+          and:
+            - claim/roles: "belt.captain"
+
   - from: ssh://anderson.station.solsys.dev
     to: ssh://anderson.station.solsys.dev:22
     policy:
@@ -128,6 +135,14 @@ routes:
             - claim/roles: "belt.captain"
             - ssh_username:
                 is: "admin"
+  
+  - from: https://medina.mcrn.solsys.dev
+    to: https://medina.station.solsys.dev:443
+    tls_skip_verify: true
+    policy:
+      - allow:
+          and:
+            - claim/roles: "belt.captain"
 
 ssh_address: 0.0.0.0:2222
 ssh_user_ca_key_file: /etc/pomerium/ssh/pomerium_user_ca_key
