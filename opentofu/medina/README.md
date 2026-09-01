@@ -4,20 +4,56 @@ Operational notes for bootstrapping and troubleshooting this device.
 See `docs/adr/0051-mikrotik-router-replacement.md` for the architecture
 decisions and full target-state design.
 
+# medina (MikroTik RB5009UG+S+IN) — bootstrap notes
+
+Operational notes for bootstrapping and troubleshooting this device.
+See `docs/adr/0051-mikrotik-router-replacement.md` for the architecture
+decisions and full target-state design.
+
 ## Current status
 
-Router successfully bootstrapped to a minimal working state: bridge +
-VLAN 1 only, single port (`ether3`). Confirmed working end-to-end (SSH,
-HTTPS, REST API). **Not yet done:**
-- Additional ports (4-8, SFP+ reserved for future switch)
-- Deferred VLANs (60 for old servers, 10/20/30/40/50 for
-  MGMT/CLUSTER/STORAGE/DMZ-INGRESS/EGRESS)
-- Firewall rules (14-rule explicit-allow set) and NAT (4 port forwards)
-- WireGuard
-- **OpenTofu import of the manually-created state below** — next
-  session should start here, using `tofu import` against each
-  resource, rather than `tofu apply` (which will hit "already exists"
-  conflicts against manually-created resources)
+**Feature-complete relative to the RV320, fully IaC-managed, tested in
+isolation on `192.168.11.0/24`. WAN not yet connected; physical
+migration not yet performed.**
+
+Built and verified via `tofu apply`, in order:
+- Bridge (`bridge-lan`, VLAN-filtering enabled) + all 8 physical ports
+  as members
+- VLAN 1 (`192.168.11.0/24`) — **active**, currently serving management
+  access during testing
+- VLAN 60 (old servers: kvm001-G2, kvm001, plexi, reversi, cloudi, nfs)
+  — defined, `192.168.101.1/24`, **deliberately no port assigned**,
+  inert until migration
+- VLANs 10/20/30/40/50 (MGMT/CLUSTER/STORAGE/DMZ-INGRESS/EGRESS) —
+  defined with correct addressing, **deliberately no ports assigned**,
+  inert until migration
+- Forward-chain firewall: 13 explicit-allow rules (translated from the
+  RV320's 14, DNS split into separate TCP/UDP rules) + explicit default
+  deny, verified correctly ordered via `place_before`
+- NAT: all 4 port forwards (80/443→reverse, 32400→plexi,
+  2222→Deimos/Pomerium SSH)
+- WireGuard: interface + 2 peers (Mac, iPhone), narrow `input`-chain
+  exception for the WireGuard UDP port only, correctly positioned
+  before the default `input` drop rule
+- DNS: `vpn.mcrn.solsys.dev` → `dynamic.solsys.dev`, for the WireGuard
+  endpoint once WAN is live
+
+**Explicitly deferred, not forgotten:**
+- **`input`-chain rework** for router-management access itself — the
+  operator's stated goal is MGMT-VLAN-only access, ultimately routed
+  entirely through Pomerium/Deimos rather than direct router access at
+  all, consistent with this project's ZTNA philosophy. The existing
+  RouterOS default `input` rules (LAN-list-based accept) remain
+  completely untouched and are what's kept this whole bootstrap process
+  reachable — do not remove or replace them until the Pomerium-only
+  access path is actually built and proven.
+- **Physical migration** — assigning real ports to VLANs 10/20/30/40/50
+  and (when ready) 60, moving cables, actual cutover from the RV320.
+  WAN (`ether1`) has never been connected to this router during
+  bootstrap; all testing has been via `ether3` on the isolated
+  `192.168.11.0/24` bootstrap network.
+- **DNS role reconsideration** (Titania/Oberon vs. router) — explicitly
+  deferred until the router itself is proven stable in production.
 
 ## Factory reset procedure
 

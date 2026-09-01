@@ -124,3 +124,12 @@ resource "cloudflare_dns_record" "nextcloud_app" {
   ttl     = 300
   proxied = false
 }
+
+resource "cloudflare_dns_record" "wireguard_mcrn" {
+  zone_id = data.cloudflare_zone.solsys_dev.id
+  name    = "vpn.mcrn"
+  type    = "CNAME"
+  content = "dynamic.solsys.dev"
+  ttl     = 300
+  proxied = false
+}

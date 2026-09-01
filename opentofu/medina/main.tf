@@ -363,3 +363,10 @@ resource "routeros_firewall_filter" "allow_wireguard" {
   place_before = "*5"
   comment     = "WireGuard — necessary exception to input-chain deferral, VPN cannot function without this"
 }
+
+resource "routeros_ip_dhcp_client" "wan" {
+  interface         = "ether1"
+  add_default_route = "yes"
+  use_peer_dns       = true
+  comment            = "defconf"
+}
