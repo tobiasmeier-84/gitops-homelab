@@ -17,7 +17,7 @@ resource "routeros_interface_bridge_vlan" "vlan1" {
 
 resource "routeros_interface_vlan" "vlan1" {
   interface = routeros_interface_bridge.lan.name
-  name      = "vlan1-legacy"
+  name      = "vlan1-clients"
   vlan_id   = 1
 }
 
