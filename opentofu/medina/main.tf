@@ -25,3 +25,25 @@ resource "routeros_ip_address" "vlan1" {
   address   = "192.168.11.1/24"
   interface = routeros_interface_vlan.vlan1.name
 }
+
+resource "routeros_interface_bridge_vlan" "vlan60" {
+  bridge   = routeros_interface_bridge.lan.name
+  vlan_ids = ["60"]
+  # deliberately no untagged/tagged ports — inert until migration
+}
+
+resource "routeros_interface_vlan" "vlan60" {
+  interface = routeros_interface_bridge.lan.name
+  name      = "vlan60-oldservers"
+  vlan_id   = 60
+}
+
+resource "routeros_ip_address" "vlan60" {
+  address   = "192.168.101.1/24"
+  interface = routeros_interface_vlan.vlan60.name
+}
+
+resource "routeros_interface_list_member" "vlan60_lan" {
+  list      = "LAN"
+  interface = routeros_interface_vlan.vlan60.name
+}
