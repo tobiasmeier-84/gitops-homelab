@@ -271,9 +271,53 @@ resource "routeros_firewall_filter" "allow_pve_admin" {
 resource "routeros_firewall_filter" "allow_ssh_switches" {
   chain        = "forward"
   action       = "accept"
-  dst_address  = "10.10.10.2-10.10.10.3"
+  dst_address  = "10.10.10.2/31"
   dst_port     = "22"
   protocol     = "tcp"
   place_before = routeros_firewall_filter.drop_forward.id
   comment      = "SSH to switches (tycho, anderson)"
+}
+
+resource "routeros_ip_firewall_nat" "nat_http" {
+  chain            = "dstnat"
+  action           = "dst-nat"
+  protocol         = "tcp"
+  dst_port         = "80"
+  in_interface_list = "WAN"
+  to_addresses     = "192.168.101.12"
+  to_ports         = "80"
+  comment          = "reverse/nginx bridge HTTP"
+}
+
+resource "routeros_ip_firewall_nat" "nat_https" {
+  chain            = "dstnat"
+  action           = "dst-nat"
+  protocol         = "tcp"
+  dst_port         = "443"
+  in_interface_list = "WAN"
+  to_addresses     = "192.168.101.12"
+  to_ports         = "443"
+  comment          = "reverse/nginx bridge HTTPS (SNI-routed)"
+}
+
+resource "routeros_ip_firewall_nat" "nat_plex" {
+  chain            = "dstnat"
+  action           = "dst-nat"
+  protocol         = "tcp"
+  dst_port         = "32400"
+  in_interface_list = "WAN"
+  to_addresses     = "192.168.101.11"
+  to_ports         = "32400"
+  comment          = "Plex (plexi), direct"
+}
+
+resource "routeros_ip_firewall_nat" "nat_pomerium_ssh" {
+  chain            = "dstnat"
+  action           = "dst-nat"
+  protocol         = "tcp"
+  dst_port         = "2222"
+  in_interface_list = "WAN"
+  to_addresses     = "10.10.40.14"
+  to_ports         = "2222"
+  comment          = "Deimos/Pomerium SSH"
 }
