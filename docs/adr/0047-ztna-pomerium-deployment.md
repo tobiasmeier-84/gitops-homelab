@@ -218,3 +218,98 @@ path, not an oversight or a temporary gap.
 This completes the SSH-over-ZTNA rollout — every admin-plane VM except
 the ZTNA infrastructure's own foundation is now reachable only through
 identity-verified, policy-gated Pomerium sessions.
+
+## Addendum: belt.mcrn.solsys.dev pinned to a single Proxmox node — load balancing was breaking Entra ID login
+
+### The symptom
+
+Entra ID SSO login to Proxmox worked 100% reliably via direct access
+(`ceres.belt.solsys.dev:8006`), and PAM (local) login worked 100%
+reliably via `belt.mcrn.solsys.dev` — but Entra ID SSO via
+`belt.mcrn.solsys.dev` specifically failed intermittently, roughly
+sometimes-works-sometimes-doesn't.
+
+### Root cause
+
+`belt.mcrn.solsys.dev` load-balanced across all three Proxmox nodes
+(`ceres`, `eros`, `pallas`) — a reasonable design for a stateless web
+UI, since any Proxmox node can manage the whole cluster. But OIDC
+login is a **stateful, multi-step redirect flow**: Proxmox stores
+session/state data tied to whichever node *initiated* the flow, then
+Entra ID redirects the browser back to `belt.mcrn.solsys.dev` for the
+callback. If Pomerium's load balancer sent that callback to a
+*different* node (or even a different `pveproxy` worker process on
+the same node — Proxmox runs multiple workers per node) than the one
+that started the flow, the callback couldn't find its matching session
+state, and login failed. PAM login has no such multi-step redirect, so
+it was unaffected regardless of which node handled it.
+
+### What was tried, and why it didn't work
+
+**`lb_policy: RING_HASH`** (consistent hashing, intended to route the
+same client to the same backend reliably) was tried first, based on
+genuine Pomerium documentation confirming the field exists. **This
+made things measurably worse, not better.** Root cause: `RING_HASH`
+defaults to hashing by source IP, and the operator's actual network
+path that day involved multiple overlapping layers (WSL, Parallels,
+VPN toggling) — meaning the *apparent* source IP was itself
+inconsistent across the login round-trip, so the hash computed a
+*different* backend on each request, actively worse than round-robin's
+occasional lucky overlap.
+
+A **cookie-based hash key** (stable regardless of network path) was
+considered as the more correct fix, but Pomerium's own documentation
+only links out to Envoy's raw protobuf reference for
+`ring_hash_lb_config` without a worked example — not enough confirmed
+detail to commit to a third config change on production access.
+
+**True priority-based failover** (always prefer `ceres`; only fall
+through to `eros`/`pallas` if `ceres` is genuinely unhealthy — not
+just weighted/probabilistic) was researched directly against Envoy's
+own documentation and confirmed as a **real, genuine Envoy capability**
+(`priority` field on cluster endpoints). However, after thoroughly
+reading Pomerium's own official routing documentation in full, this
+capability does not appear to be exposed in Pomerium's own route YAML
+schema — only `weight` (still sends some traffic to backups under
+normal conditions, not true failover) and `lb_policy` are documented.
+HAProxy was also considered and ruled out: it only ever sees `deimos`
+as a single opaque target for all `mcrn.solsys.dev` traffic (TLS
+passthrough by SNI) — it has no visibility into which Proxmox node
+Pomerium ultimately selects, so it structurally cannot solve this
+without a real architecture change.
+
+### Decision: pin the route to a single node
+
+```yaml
+  - from: https://belt.mcrn.solsys.dev
+    to:
+      - https://ceres.belt.solsys.dev:8006
+    health_checks:
+      - timeout: 2s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 1
+        http_health_check:
+          path: /
+    policy:
+      - allow:
+          or:
+            - claim/roles: "belt.captain"
+            - claim/roles: "belt.crew"
+            - claim/roles: "belt.passenger"
+```
+
+Confirmed genuinely 100% reliable after this change. This trades
+automatic failover for reliability — if `ceres` ever goes down, the
+fix is a deliberate, manual one-line change to swap the target to
+`eros` or `pallas`, not automatic. Given this route is the operator's
+own admin access to Proxmox (not a service other people depend on
+continuously), manual failover was judged an acceptable trade-off for
+genuine 100% login reliability the rest of the time.
+
+### Worth revisiting
+
+Pomerium releases frequently — worth checking in a future session
+whether a newer version has added `priority`-style failover support to
+its route schema, which would let this route safely return to
+multi-node coverage without reintroducing the original bug.
