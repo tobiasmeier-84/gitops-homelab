@@ -243,3 +243,77 @@ process turned out to be partially false — assuming a non-US option
 must cost more is itself an unverified assumption, and it was wrong
 here. Worth checking real numbers before accepting a tradeoff as given,
 even after a design otherwise feels finalized.
+
+## Addendum: OVHcloud Chain A data leg provisioned — two real gotchas found
+
+**Status:** Scopuli (Chain A's OVHcloud data bucket) fully provisioned
+via OpenTofu, confirmed working end-to-end (real PutObject/ListBucket
+tested via the AWS CLI against the actual S3-compatible endpoint).
+
+### Gotcha 1: OVHcloud's Object Storage region name is case-sensitive
+
+The API rejected `region_name = "eu-west-par"` with `"Invalid region
+parameter"`, despite this being the exact string OVHcloud's own public
+documentation uses. The actual required value, confirmed directly from
+the OVHcloud control panel's own bucket-creation dropdown, is
+**`EU-WEST-PAR`** (uppercase). Lowercase — genuinely identical in every
+other respect — is silently rejected as invalid rather than
+normalized. Worth checking the console's exact displayed string
+directly for any future OVHcloud region-scoped resource, rather than
+trusting documentation casing.
+
+### Gotcha 2: `role_names` alone does not grant S3 data-plane access — a separate policy resource is required
+
+Creating a user with `role_names = ["objectstore_operator"]` and
+generating S3 credentials both succeeded, and the credentials were
+valid (non-empty, correctly formatted) — but every actual S3 operation
+(`PutObject`, `ListObjectsV2`) returned `AccessDenied`. Root cause,
+confirmed against two independent sources (OVHcloud's own Pulumi
+provider examples, which share the identical underlying API as the
+Terraform/OpenTofu provider, and a real working community Terraform
+module for OVH S3): **`role_names` grants project-level management
+rights** (create/delete buckets via OVHcloud's own control-plane API)
+**but not S3-protocol data access** — these are two genuinely separate
+permission layers. A dedicated `ovh_cloud_project_user_s3_policy`
+resource, with an explicit AWS-IAM-style policy document scoped to the
+specific bucket ARN, is required for actual read/write object
+operations:
+
+```hcl
+resource "ovh_cloud_project_user_s3_policy" "backup_writer" {
+  service_name = var.ovh_project_id
+  user_id      = ovh_cloud_project_user.backup_writer.id
+  policy = jsonencode({
+    Statement = [{
+      Sid    = "RWContainer"
+      Effect = "Allow"
+      Action = [
+        "s3:GetObject", "s3:PutObject", "s3:DeleteObject",
+        "s3:ListBucket", "s3:ListMultipartUploadParts",
+        "s3:ListBucketMultipartUploads", "s3:AbortMultipartUpload",
+        "s3:GetBucketLocation",
+      ]
+      Resource = [
+        "arn:aws:s3:::scopuli-chain-a-backup",
+        "arn:aws:s3:::scopuli-chain-a-backup/*",
+      ]
+    }]
+  })
+}
+```
+
+Also worth noting: after this policy resource applied successfully
+(confirmed via `tofu state show`), the very first S3 operation still
+failed with `AccessDenied` — resolved after waiting roughly 60 seconds
+and retrying, consistent with genuine IAM propagation delay rather
+than a configuration error. Worth expecting this delay on any future
+OVHcloud IAM/policy change, not treating an immediate post-apply
+failure as proof the config itself is wrong.
+
+### Consequences
+- `opentofu/backup-infra-ovhcloud/` now fully provisions Scopuli,
+  confirmed working.
+- Chain A (Scopuli data + Azure Key Vault key) is now fully
+  provisioned on both legs.
+- Chain B (Backblaze B2 data + Bitwarden Secrets Manager key) remains
+  to be built.
