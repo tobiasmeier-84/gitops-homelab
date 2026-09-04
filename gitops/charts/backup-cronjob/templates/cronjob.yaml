@@ -39,123 +39,116 @@ spec:
               envFrom:
                 - secretRef:
                     name: backup-chain-credentials
-                        command:
-                          - /bin/sh
-                          - -c
-                          - |
-                            set -e
-                            RUN_ID=$(date +%Y%m%d-%H%M%S)
-                            SNAP_NAME="${APP_NAME}-backup-${RUN_ID}"
-                            RESTORE_PVC="${APP_NAME}-restore-${RUN_ID}"
-                            WORKER_POD="${APP_NAME}-worker-${RUN_ID}"
-
-                            cleanup() {
-                              echo "Cleaning up..."
-                              kubectl delete pod "$WORKER_POD" -n "$NAMESPACE" --ignore-not-found=true
-                              kubectl delete pvc "$RESTORE_PVC" -n "$NAMESPACE" --ignore-not-found=true
-                              kubectl delete volumesnapshot "$SNAP_NAME" -n "$NAMESPACE" --ignore-not-found=true
-                            }
-                            trap cleanup EXIT
-
-                            echo "Creating snapshot $SNAP_NAME..."
-                            kubectl apply -f - << EOF
-                            apiVersion: snapshot.storage.k8s.io/v1
-                            kind: VolumeSnapshot
-                            metadata:
-                              name: $SNAP_NAME
-                              namespace: $NAMESPACE
-                            spec:
-                              volumeSnapshotClassName: longhorn-snapshot-vsc
-                              source:
-                                persistentVolumeClaimName: $PVC_NAME
-                            EOF
-                            kubectl wait --for=jsonpath='{.status.readyToUse}'=true "volumesnapshot/$SNAP_NAME" -n "$NAMESPACE" --timeout=1800s
-
-                            echo "Restoring to PVC $RESTORE_PVC (single-replica, disposable)..."
-                            kubectl apply -f - << EOF
-                            apiVersion: v1
-                            kind: PersistentVolumeClaim
-                            metadata:
-                              name: $RESTORE_PVC
-                              namespace: $NAMESPACE
-                            spec:
-                              accessModes: ["ReadWriteOnce"]
-                              storageClassName: longhorn-bulk-single-replica
-                              resources:
-                                requests:
-                                  storage: $PVC_SIZE
-                              dataSource:
-                                name: $SNAP_NAME
-                                kind: VolumeSnapshot
-                                apiGroup: snapshot.storage.k8s.io
-                            EOF
-                            kubectl wait --for=jsonpath='{.status.phase}'=Bound "pvc/$RESTORE_PVC" -n "$NAMESPACE" --timeout=1800s
-
-                            echo "Starting worker pod $WORKER_POD..."
-                            kubectl apply -f - << EOF
-                            apiVersion: v1
-                            kind: Pod
-                            metadata:
-                              name: $WORKER_POD
-                              namespace: $NAMESPACE
-                              labels:
-                                app: backup-worker
-                            spec:
-                              restartPolicy: Never
-                              securityContext:
-                                runAsNonRoot: true
-                                runAsUser: 1000
-                                seccompProfile:
-                                  type: RuntimeDefault
-                              containers:
-                                - name: worker
-                                  image: alpine:3.20
-                                  securityContext:
-                                    allowPrivilegeEscalation: false
-                                    capabilities:
-                                      drop: ["ALL"]
-                                  envFrom:
-                                    - secretRef:
-                                        name: backup-chain-credentials
-                                  env:
-                                    - name: APP_NAME
-                                      value: "$APP_NAME"
-                                    - name: RUN_ID
-                                      value: "$RUN_ID"
-                                  command: ["/bin/sh", "/scripts/backup-worker.sh"]
-                                  volumeMounts:
-                                    - name: data
-                                      mountPath: /data
-                                      readOnly: true
-                                    - name: script
-                                      mountPath: /scripts
-                              volumes:
-                                - name: data
-                                  persistentVolumeClaim:
-                                    claimName: $RESTORE_PVC
-                                - name: script
-                                  configMap:
-                                    name: backup-worker-script
-                                    defaultMode: 0755
-                            EOF
-
-                            kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$WORKER_POD -n "$NAMESPACE" --timeout=3600s
-
-                            echo "=== Worker logs ==="
-                            kubectl logs "$WORKER_POD" -n "$NAMESPACE" | tee /tmp/worker-output.log
-
-                            MANIFEST_LINE=$(grep '^MANIFEST_ENTRY:' /tmp/worker-output.log | sed 's/^MANIFEST_ENTRY://')
-                            if [ -n "$MANIFEST_LINE" ]; then
-                              echo "Recording manifest entry: $MANIFEST_LINE"
-                              git clone git@github.com:tobiasmeier-84/gitops-homelab.git /tmp/repo
-                              echo "$MANIFEST_LINE" >> /tmp/repo/backups/manifest.jsonl
-                              cd /tmp/repo
-                              git config user.email "backup-bot@solsys.dev"
-                              git config user.name "Backup Bot"
-                              git add backups/manifest.jsonl
-                              git commit -m "Backup run $RUN_ID for $APP_NAME"
-                              git push
-                            else
-                              echo "ERROR: no manifest entry found in worker output"
-                              exit 1
-                            fi
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  RUN_ID=$(date +%Y%m%d-%H%M%S)
+                  SNAP_NAME="${APP_NAME}-backup-${RUN_ID}"
+                  RESTORE_PVC="${APP_NAME}-restore-${RUN_ID}"
+                  WORKER_POD="${APP_NAME}-worker-${RUN_ID}"
+                  cleanup() {
+                    echo "Cleaning up..."
+                    kubectl delete pod "$WORKER_POD" -n "$NAMESPACE" --ignore-not-found=true
+                    kubectl delete pvc "$RESTORE_PVC" -n "$NAMESPACE" --ignore-not-found=true
+                    kubectl delete volumesnapshot "$SNAP_NAME" -n "$NAMESPACE" --ignore-not-found=true
+                  }
+                  trap cleanup EXIT
+                  echo "Creating snapshot $SNAP_NAME..."
+                  kubectl apply -f - << EOF
+                  apiVersion: snapshot.storage.k8s.io/v1
+                  kind: VolumeSnapshot
+                  metadata:
+                    name: $SNAP_NAME
+                    namespace: $NAMESPACE
+                  spec:
+                    volumeSnapshotClassName: longhorn-snapshot-vsc
+                    source:
+                      persistentVolumeClaimName: $PVC_NAME
+                  EOF
+                  kubectl wait --for=jsonpath='{.status.readyToUse}'=true "volumesnapshot/$SNAP_NAME" -n "$NAMESPACE" --timeout=1800s
+                  echo "Restoring to PVC $RESTORE_PVC (single-replica, disposable)..."
+                  kubectl apply -f - << EOF
+                  apiVersion: v1
+                  kind: PersistentVolumeClaim
+                  metadata:
+                    name: $RESTORE_PVC
+                    namespace: $NAMESPACE
+                  spec:
+                    accessModes: ["ReadWriteOnce"]
+                    storageClassName: longhorn-bulk-single-replica
+                    resources:
+                      requests:
+                        storage: $PVC_SIZE
+                    dataSource:
+                      name: $SNAP_NAME
+                      kind: VolumeSnapshot
+                      apiGroup: snapshot.storage.k8s.io
+                  EOF
+                  kubectl wait --for=jsonpath='{.status.phase}'=Bound "pvc/$RESTORE_PVC" -n "$NAMESPACE" --timeout=1800s
+                  echo "Starting worker pod $WORKER_POD..."
+                  kubectl apply -f - << EOF
+                  apiVersion: v1
+                  kind: Pod
+                  metadata:
+                    name: $WORKER_POD
+                    namespace: $NAMESPACE
+                    labels:
+                      app: backup-worker
+                  spec:
+                    restartPolicy: Never
+                    securityContext:
+                      runAsNonRoot: true
+                      runAsUser: 1000
+                      seccompProfile:
+                        type: RuntimeDefault
+                    containers:
+                      - name: worker
+                        image: alpine:3.20
+                        securityContext:
+                          allowPrivilegeEscalation: false
+                          capabilities:
+                            drop: ["ALL"]
+                        envFrom:
+                          - secretRef:
+                              name: backup-chain-credentials
+                        env:
+                          - name: APP_NAME
+                            value: "$APP_NAME"
+                          - name: RUN_ID
+                            value: "$RUN_ID"
+                        command: ["/bin/sh", "/scripts/backup-worker.sh"]
+                        volumeMounts:
+                          - name: data
+                            mountPath: /data
+                            readOnly: true
+                          - name: script
+                            mountPath: /scripts
+                    volumes:
+                      - name: data
+                        persistentVolumeClaim:
+                          claimName: $RESTORE_PVC
+                      - name: script
+                        configMap:
+                          name: backup-worker-script
+                          defaultMode: 0755
+                  EOF
+                  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$WORKER_POD -n "$NAMESPACE" --timeout=3600s
+                  echo "=== Worker logs ==="
+                  kubectl logs "$WORKER_POD" -n "$NAMESPACE" | tee /tmp/worker-output.log
+                  MANIFEST_LINE=$(grep '^MANIFEST_ENTRY:' /tmp/worker-output.log | sed 's/^MANIFEST_ENTRY://')
+                  if [ -n "$MANIFEST_LINE" ]; then
+                    echo "Recording manifest entry: $MANIFEST_LINE"
+                    git clone git@github.com:tobiasmeier-84/gitops-homelab.git /tmp/repo
+                    echo "$MANIFEST_LINE" >> /tmp/repo/backups/manifest.jsonl
+                    cd /tmp/repo
+                    git config user.email "backup-bot@solsys.dev"
+                    git config user.name "Backup Bot"
+                    git add backups/manifest.jsonl
+                    git commit -m "Backup run $RUN_ID for $APP_NAME"
+                    git push
+                  else
+                    echo "ERROR: no manifest entry found in worker output"
+                    exit 1
+                  fi
