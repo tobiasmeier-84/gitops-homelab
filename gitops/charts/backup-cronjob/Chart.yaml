@@ -1,0 +1,4 @@
+apiVersion: v2
+name: backup-cronjob
+description: Reusable dual-chain encrypted backup CronJob for any app's PVC
+version: 0.1.0
