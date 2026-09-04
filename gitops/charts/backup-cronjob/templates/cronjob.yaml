@@ -39,7 +39,7 @@ spec:
               envFrom:
                 - secretRef:
                     name: backup-chain-credentials
-              command:
+                        command:
                 - /bin/sh
                 - -c
                 - |
@@ -71,7 +71,7 @@ spec:
                   EOF
                   kubectl wait --for=jsonpath='{.status.readyToUse}'=true "volumesnapshot/$SNAP_NAME" -n "$NAMESPACE" --timeout=1800s
 
-                  echo "Restoring to PVC $RESTORE_PVC..."
+                  echo "Restoring to PVC $RESTORE_PVC (single-replica, disposable)..."
                   kubectl apply -f - << EOF
                   apiVersion: v1
                   kind: PersistentVolumeClaim
@@ -80,7 +80,7 @@ spec:
                     namespace: $NAMESPACE
                   spec:
                     accessModes: ["ReadWriteOnce"]
-                    storageClassName: $STORAGE_CLASS
+                    storageClassName: longhorn-bulk-single-replica
                     resources:
                       requests:
                         storage: $PVC_SIZE
@@ -122,10 +122,6 @@ spec:
                             value: "$APP_NAME"
                           - name: RUN_ID
                             value: "$RUN_ID"
-                        volumeMounts:
-                          - name: data
-                            mountPath: /data
-                            readOnly: true
                         command: ["/bin/sh", "/scripts/backup-worker.sh"]
                         volumeMounts:
                           - name: data
@@ -143,7 +139,6 @@ spec:
                           defaultMode: 0755
                   EOF
 
-                  kubectl wait --for=condition=Ready pod/$WORKER_POD -n "$NAMESPACE" --timeout=120s || true
                   kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$WORKER_POD -n "$NAMESPACE" --timeout=3600s
 
                   echo "=== Worker logs ==="
