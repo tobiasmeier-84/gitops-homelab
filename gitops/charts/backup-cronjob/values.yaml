@@ -1,0 +1,6 @@
+appName: rocinante
+namespace: rocinante
+pvcName: rocinante-nextcloud-nextcloud
+pvcSize: 150Gi
+storageClassName: longhorn-bulk
+schedule: "0 3 * * 0"  # weekly, Sunday 3ammkdir -p templates/s

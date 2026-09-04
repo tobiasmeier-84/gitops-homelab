@@ -80,3 +80,8 @@
   hosts: rke2_nodes
   roles:
     - rocinante-smtp-secret
+
+- name: Configure backup chain credentials
+  hosts: rke2_nodes
+  roles:
+    - backup-credentials-secret

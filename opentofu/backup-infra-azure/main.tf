@@ -21,3 +21,33 @@ resource "azurerm_key_vault" "chain_b_key" {
     ]
   }
 }
+
+resource "azuread_application" "backup_writer" {
+  display_name = "backup-chain-b-key-writer"
+}
+
+resource "azuread_service_principal" "backup_writer" {
+  client_id = azuread_application.backup_writer.client_id
+}
+
+resource "azuread_application_password" "backup_writer" {
+  application_id = azuread_application.backup_writer.id
+  display_name   = "backup-cronjob-secret"
+}
+
+resource "azurerm_key_vault_access_policy" "backup_writer" {
+  key_vault_id = azurerm_key_vault.chain_b_key.id
+  tenant_id    = var.tenant_id
+  object_id    = azuread_service_principal.backup_writer.object_id
+
+  secret_permissions = ["Get", "Set", "List"]
+}
+
+output "backup_writer_client_id" {
+  value = azuread_application.backup_writer.client_id
+}
+
+output "backup_writer_client_secret" {
+  value     = azuread_application_password.backup_writer.value
+  sensitive = true
+}
