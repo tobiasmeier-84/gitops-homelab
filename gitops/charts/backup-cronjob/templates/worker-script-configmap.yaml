@@ -8,7 +8,7 @@ data:
     #!/bin/sh
     set -e
 
-    apk add --no-cache age zstd tar aws-cli curl jq > /dev/null 2>&1
+    apk add --no-cache age zstd tar aws-cli curl jq unzip
 
     ARCHIVE="/tmp/${APP_NAME}-${RUN_ID}.tar.zst"
     echo "Compressing /data..."
