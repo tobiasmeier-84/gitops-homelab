@@ -142,3 +142,21 @@ resource "cloudflare_dns_record" "medina_mcrn" {
   ttl     = 300
   proxied = false
 }
+
+resource "cloudflare_dns_record" "guanshiyin_app" {
+  zone_id = data.cloudflare_zone.solsys_dev.id
+  name    = "guanshiyin.app"
+  type    = "CNAME"
+  content = "dynamic.solsys.dev"
+  ttl     = 300
+  proxied = false
+}
+
+resource "cloudflare_dns_record" "office_app" {
+  zone_id = data.cloudflare_zone.solsys_dev.id
+  name    = "office.app"
+  type    = "CNAME"
+  content = "dynamic.solsys.dev"
+  ttl     = 300
+  proxied = false
+}

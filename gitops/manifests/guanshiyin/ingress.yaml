@@ -1,0 +1,27 @@
+spec:
+  tls:
+    - hosts:
+        - guanshiyin.app.solsys.dev
+        - office.app.solsys.dev
+      secretName: guanshiyin-tls
+  rules:
+    - host: guanshiyin.app.solsys.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: guanshiyin-collabora-online
+                port:
+                  number: 9980
+    - host: office.app.solsys.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: guanshiyin-collabora-online
+                port:
+                  number: 9980
