@@ -86,4 +86,8 @@ spec:
               SMTP_PASS_B64=$(printf '%s' "$smtp_password" | base64)
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set mail_smtppassword --value=\$(echo $SMTP_PASS_B64 | base64 -d)"
 
+              # Nextcloud Office (Guanshiyin/Collabora Online)
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ app:enable richdocuments" || true
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:app:set richdocuments wopi_url --value=https://guanshiyin.app.solsys.dev"
+
               echo "Done."
