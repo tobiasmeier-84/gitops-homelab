@@ -19,6 +19,15 @@ spec:
           server_name: "guanshiyin.app.solsys.dev:443"
         ingress:
           enabled: false
+        autoscaling:
+          enabled: false
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
   destination:
     server: https://kubernetes.default.svc
     namespace: rocinante
