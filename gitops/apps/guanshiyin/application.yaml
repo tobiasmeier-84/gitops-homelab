@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: guanshiyin
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://collaboraonline.github.io/online/
+    chart: collabora-online
+    targetRevision: "*"
+    helm:
+      values: |
+        replicaCount: 1
+        collabora:
+          aliasgroups:
+            - host: "https://guanshiyin.app.solsys.dev:443"
+          extra_params: "--o:ssl.enable=false --o:ssl.termination=true --o:num_prespawn_children=4"
+          server_name: "guanshiyin.app.solsys.dev:443"
+        ingress:
+          enabled: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rocinante
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
