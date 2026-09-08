@@ -12,6 +12,8 @@ data:
     mkdir -p /tmp/pkgroot
     apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age zstd
     export PATH="/tmp/pkgroot/usr/bin:/tmp/pkgroot/bin:$PATH"
+    export PATH="/tmp/pkgroot/usr/bin:/tmp/pkgroot/bin:$PATH"
+    export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
 
     ARCHIVE="/tmp/${APP_NAME}-${RUN_ID}.tar.zst"
     echo "Compressing /data..."
