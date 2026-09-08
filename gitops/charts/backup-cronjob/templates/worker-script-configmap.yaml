@@ -13,13 +13,14 @@ data:
     apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age zstd aws-cli unzip curl jq || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
     export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
 
-    AWS_PY="/tmp/pkgroot/usr/bin/python3"
     AWS="/tmp/pkgroot/usr/bin/aws"
+    AWS_PY="/tmp/pkgroot/usr/bin/python3"
     AGE="/tmp/pkgroot/usr/bin/age"
     AGE_KEYGEN="/tmp/pkgroot/usr/bin/age-keygen"
     ZSTD="/tmp/pkgroot/usr/bin/zstd"
     UNZIP="/tmp/pkgroot/usr/bin/unzip"
-    CURL="/tmp/pkgroot/usr/bin/curl -k"
+    CURL="/tmp/pkgroot/usr/bin/curl"
+    CURL_OPTS="-k"
     JQ="/tmp/pkgroot/usr/bin/jq"
 
     ARCHIVE="/tmp/${APP_NAME}-${RUN_ID}.tar.zst"
@@ -55,15 +56,15 @@ data:
       --endpoint-url https://s3.eu-central-003.backblazeb2.com
 
     echo "Storing Chain A key in Azure Key Vault..."
-    AZ_TOKEN=$($CURL -sk -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
+    AZ_TOKEN=$($CURL $CURL_OPTS -s -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
       -d "grant_type=client_credentials&client_id=${AZURE_CLIENT_ID}&client_secret=${AZURE_CLIENT_SECRET}&scope=https://vault.azure.net/.default" \
       | "$JQ" -r '.access_token')
-    $CURL -sk -X PUT "https://kv-solsys-chainb.vault.azure.net/secrets/${APP_NAME}-${RUN_ID}?api-version=7.4" \
+    $CURL $CURL_OPTS -s -X PUT "https://kv-solsys-chainb.vault.azure.net/secrets/${APP_NAME}-${RUN_ID}?api-version=7.4" \
       -H "Authorization: Bearer $AZ_TOKEN" -H "Content-Type: application/json" \
       -d "{\"value\":\"$CHAIN_A_PRIVKEY\"}" -o /dev/null -w "Azure Key Vault store: HTTP %{http_code}\n"
 
     echo "Storing Chain B key in Bitwarden Secrets Manager..."
-    $CURL -sL https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-x86_64-unknown-linux-musl-2.1.0.zip -o /tmp/bws.zip
+    $CURL $CURL_OPTS -sL https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-x86_64-unknown-linux-musl-2.1.0.zip -o /tmp/bws.zip
     "$UNZIP" -o /tmp/bws.zip -d /tmp
     export BWS_SERVER_URL="https://vault.bitwarden.eu"
     /tmp/bws secret create --access-token "$BW_ACCESS_TOKEN" "${APP_NAME}-${RUN_ID}" "$CHAIN_B_PRIVKEY" "$BW_PROJECT_ID" > /dev/null
@@ -81,12 +82,12 @@ data:
       echo "Deleting old Chain A blob: $OLD_BLOB (run_id: $OLD_RUN_ID)"
       "$AWS_PY" "$AWS" s3 rm "s3://scopuli-chain-a-backup/${OLD_BLOB}" --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net
       echo "Deleting corresponding Azure Key Vault secret: ${APP_NAME}-${OLD_RUN_ID}"
-      AZ_TOKEN=$($CURL -sk -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
+      AZ_TOKEN=$($CURL $CURL_OPTS -s -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
         -d "grant_type=client_credentials&client_id=${AZURE_CLIENT_ID}&client_secret=${AZURE_CLIENT_SECRET}&scope=https://vault.azure.net/.default" \
         | "$JQ" -r '.access_token')
-      $CURL -sk -X DELETE "https://kv-solsys-chainb.vault.azure.net/secrets/${APP_NAME}-${OLD_RUN_ID}?api-version=7.4" \
+      $CURL $CURL_OPTS -s -X DELETE "https://kv-solsys-chainb.vault.azure.net/secrets/${APP_NAME}-${OLD_RUN_ID}?api-version=7.4" \
         -H "Authorization: Bearer $AZ_TOKEN" -o /dev/null -w "  delete: HTTP %{http_code}\n"
-      $CURL -sk -X DELETE "https://kv-solsys-chainb.vault.azure.net/deletedsecrets/${APP_NAME}-${OLD_RUN_ID}?api-version=7.4" \
+      $CURL $CURL_OPTS -s -X DELETE "https://kv-solsys-chainb.vault.azure.net/deletedsecrets/${APP_NAME}-${OLD_RUN_ID}?api-version=7.4" \
         -H "Authorization: Bearer $AZ_TOKEN" -o /dev/null -w "  purge: HTTP %{http_code}\n"
     done
 
@@ -111,4 +112,4 @@ data:
       fi
     done
 
-    echo "MANIFEST_ENTRY:{\"run_id\":\"${RUN_ID}\",\"app\":\"${APP_NAME}\",\"chainA_blob\":\"${APP_NAME}-${RUN_ID}.age\",\"chainA_key_ref\":\"azure-kv:${APP_NAME}-${RUN_ID}\",\"chainB_blob\":\"${APP_NAME}-${RUN_ID}.age\",\"chainB_key_ref\":\"bitwarden:${APP_NAME}-${RUN_ID}\"}"
+    echo "Backup run $RUN_ID complete."
