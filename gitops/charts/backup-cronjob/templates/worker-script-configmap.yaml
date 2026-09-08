@@ -10,7 +10,7 @@ data:
 
     echo "Installing age and zstd into alternate root..."
     mkdir -p /tmp/pkgroot
-    apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories age zstd
+    apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age zstd
     export PATH="/tmp/pkgroot/usr/bin:/tmp/pkgroot/bin:$PATH"
 
     ARCHIVE="/tmp/${APP_NAME}-${RUN_ID}.tar.zst"
