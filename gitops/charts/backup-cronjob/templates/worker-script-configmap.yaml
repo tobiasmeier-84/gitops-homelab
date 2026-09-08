@@ -65,7 +65,7 @@ data:
     echo "Storing Chain B key in Bitwarden Secrets Manager..."
     $CURL -sL https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-x86_64-unknown-linux-musl-2.1.0.zip -o /tmp/bws.zip
     "$UNZIP" -o /tmp/bws.zip -d /tmp
-    /tmp/bws secret create "${APP_NAME}-${RUN_ID}" "$CHAIN_B_PRIVKEY" "$BW_PROJECT_ID" \
-      --access-token "$BW_ACCESS_TOKEN" --api-url https://api.bitwarden.eu --identity-url https://identity.bitwarden.eu
+    export BWS_SERVER_URL="https://vault.bitwarden.eu"
+    /tmp/bws secret create --access-token "$BW_ACCESS_TOKEN" "${APP_NAME}-${RUN_ID}" "$CHAIN_B_PRIVKEY" "$BW_PROJECT_ID"
 
     echo "MANIFEST_ENTRY:{\"run_id\":\"${RUN_ID}\",\"app\":\"${APP_NAME}\",\"chainA_blob\":\"${APP_NAME}-${RUN_ID}.age\",\"chainA_key_ref\":\"azure-kv:${APP_NAME}-${RUN_ID}\",\"chainB_blob\":\"${APP_NAME}-${RUN_ID}.age\",\"chainB_key_ref\":\"bitwarden:${APP_NAME}-${RUN_ID}\"}"
