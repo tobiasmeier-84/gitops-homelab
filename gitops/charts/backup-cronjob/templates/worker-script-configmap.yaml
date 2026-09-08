@@ -15,6 +15,10 @@ data:
     export PATH="/tmp/pkgroot/usr/bin:/tmp/pkgroot/bin:$PATH"
     export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
 
+    echo "Checking aws availability..."
+    which aws || echo "aws not in PATH: $PATH"
+    ls -la /usr/bin/aws 2>&1 || echo "aws binary not found at expected location"
+
     ARCHIVE="/tmp/${APP_NAME}-${RUN_ID}.tar.zst"
     echo "Compressing /data..."
     tar -C /data -cf - . | zstd -T0 -o "$ARCHIVE"
