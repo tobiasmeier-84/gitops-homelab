@@ -55,17 +55,18 @@ data:
       --endpoint-url https://s3.eu-central-003.backblazeb2.com
 
     echo "Storing Chain A key in Azure Key Vault..."
-    AZ_TOKEN=$($CURL -s -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
+    AZ_TOKEN=$(curl -sk -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
       -d "grant_type=client_credentials&client_id=${AZURE_CLIENT_ID}&client_secret=${AZURE_CLIENT_SECRET}&scope=https://vault.azure.net/.default" \
-      | $JQ -r '.access_token')
-    $CURL -s -X PUT "https://kv-solsys-chainb.vault.azure.net/secrets/${APP_NAME}-${RUN_ID}?api-version=7.4" \
+      | "$JQ" -r '.access_token')
+    curl -sk -X PUT "https://kv-solsys-chainb.vault.azure.net/secrets/${APP_NAME}-${RUN_ID}?api-version=7.4" \
       -H "Authorization: Bearer $AZ_TOKEN" -H "Content-Type: application/json" \
-      -d "{\"value\":\"$CHAIN_A_PRIVKEY\"}"
+      -d "{\"value\":\"$CHAIN_A_PRIVKEY\"}" -o /dev/null -w "Azure Key Vault store: HTTP %{http_code}\n"
 
     echo "Storing Chain B key in Bitwarden Secrets Manager..."
-    $CURL -sL https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-x86_64-unknown-linux-musl-2.1.0.zip -o /tmp/bws.zip
+    curl -sL https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-x86_64-unknown-linux-musl-2.1.0.zip -o /tmp/bws.zip
     "$UNZIP" -o /tmp/bws.zip -d /tmp
     export BWS_SERVER_URL="https://vault.bitwarden.eu"
-    /tmp/bws secret create --access-token "$BW_ACCESS_TOKEN" "${APP_NAME}-${RUN_ID}" "$CHAIN_B_PRIVKEY" "$BW_PROJECT_ID"
+    /tmp/bws secret create --access-token "$BW_ACCESS_TOKEN" "${APP_NAME}-${RUN_ID}" "$CHAIN_B_PRIVKEY" "$BW_PROJECT_ID" > /dev/null
+    echo "Bitwarden secret stored successfully"
 
     echo "MANIFEST_ENTRY:{\"run_id\":\"${RUN_ID}\",\"app\":\"${APP_NAME}\",\"chainA_blob\":\"${APP_NAME}-${RUN_ID}.age\",\"chainA_key_ref\":\"azure-kv:${APP_NAME}-${RUN_ID}\",\"chainB_blob\":\"${APP_NAME}-${RUN_ID}.age\",\"chainB_key_ref\":\"bitwarden:${APP_NAME}-${RUN_ID}\"}"
