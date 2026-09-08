@@ -55,15 +55,15 @@ data:
       --endpoint-url https://s3.eu-central-003.backblazeb2.com
 
     echo "Storing Chain A key in Azure Key Vault..."
-    AZ_TOKEN=$(curl -sk -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
+    AZ_TOKEN=$($CURL -sk -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
       -d "grant_type=client_credentials&client_id=${AZURE_CLIENT_ID}&client_secret=${AZURE_CLIENT_SECRET}&scope=https://vault.azure.net/.default" \
       | "$JQ" -r '.access_token')
-    curl -sk -X PUT "https://kv-solsys-chainb.vault.azure.net/secrets/${APP_NAME}-${RUN_ID}?api-version=7.4" \
+    $CURL -sk -X PUT "https://kv-solsys-chainb.vault.azure.net/secrets/${APP_NAME}-${RUN_ID}?api-version=7.4" \
       -H "Authorization: Bearer $AZ_TOKEN" -H "Content-Type: application/json" \
       -d "{\"value\":\"$CHAIN_A_PRIVKEY\"}" -o /dev/null -w "Azure Key Vault store: HTTP %{http_code}\n"
 
     echo "Storing Chain B key in Bitwarden Secrets Manager..."
-    curl -sL https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-x86_64-unknown-linux-musl-2.1.0.zip -o /tmp/bws.zip
+    $CURL -sL https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-x86_64-unknown-linux-musl-2.1.0.zip -o /tmp/bws.zip
     "$UNZIP" -o /tmp/bws.zip -d /tmp
     export BWS_SERVER_URL="https://vault.bitwarden.eu"
     /tmp/bws secret create --access-token "$BW_ACCESS_TOKEN" "${APP_NAME}-${RUN_ID}" "$CHAIN_B_PRIVKEY" "$BW_PROJECT_ID" > /dev/null
@@ -81,12 +81,12 @@ data:
       echo "Deleting old Chain A blob: $OLD_BLOB (run_id: $OLD_RUN_ID)"
       "$AWS_PY" "$AWS" s3 rm "s3://scopuli-chain-a-backup/${OLD_BLOB}" --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net
       echo "Deleting corresponding Azure Key Vault secret: ${APP_NAME}-${OLD_RUN_ID}"
-      AZ_TOKEN=$(curl -sk -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
+      AZ_TOKEN=$($CURL -sk -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
         -d "grant_type=client_credentials&client_id=${AZURE_CLIENT_ID}&client_secret=${AZURE_CLIENT_SECRET}&scope=https://vault.azure.net/.default" \
         | "$JQ" -r '.access_token')
-      curl -sk -X DELETE "https://kv-solsys-chainb.vault.azure.net/secrets/${APP_NAME}-${OLD_RUN_ID}?api-version=7.4" \
+      $CURL -sk -X DELETE "https://kv-solsys-chainb.vault.azure.net/secrets/${APP_NAME}-${OLD_RUN_ID}?api-version=7.4" \
         -H "Authorization: Bearer $AZ_TOKEN" -o /dev/null -w "  delete: HTTP %{http_code}\n"
-      curl -sk -X DELETE "https://kv-solsys-chainb.vault.azure.net/deletedsecrets/${APP_NAME}-${OLD_RUN_ID}?api-version=7.4" \
+      $CURL -sk -X DELETE "https://kv-solsys-chainb.vault.azure.net/deletedsecrets/${APP_NAME}-${OLD_RUN_ID}?api-version=7.4" \
         -H "Authorization: Bearer $AZ_TOKEN" -o /dev/null -w "  purge: HTTP %{http_code}\n"
     done
 
