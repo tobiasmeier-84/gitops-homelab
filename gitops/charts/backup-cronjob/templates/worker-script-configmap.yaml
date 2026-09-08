@@ -19,7 +19,7 @@ data:
     AGE_KEYGEN="/tmp/pkgroot/usr/bin/age-keygen"
     ZSTD="/tmp/pkgroot/usr/bin/zstd"
     UNZIP="/tmp/pkgroot/usr/bin/unzip"
-    CURL="/tmp/pkgroot/usr/bin/curl"
+    CURL="/tmp/pkgroot/usr/bin/curl -k"
     JQ="/tmp/pkgroot/usr/bin/jq"
 
     ARCHIVE="/tmp/${APP_NAME}-${RUN_ID}.tar.zst"
