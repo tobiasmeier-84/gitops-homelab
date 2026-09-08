@@ -10,6 +10,9 @@ data:
 
     echo "Installing age and zstd into alternate root..."
     mkdir -p /tmp/pkgroot
+    echo "=== DEBUG: initial PATH is: $PATH ==="
+    echo "=== DEBUG: full env ==="
+    env
     apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age zstd
     export PATH="/tmp/pkgroot/usr/bin:/tmp/pkgroot/bin:$PATH"
     export PATH="/tmp/pkgroot/usr/bin:/tmp/pkgroot/bin:$PATH"
