@@ -10,7 +10,7 @@ data:
 
     echo "Installing age, zstd, aws-cli, unzip into alternate root..."
     mkdir -p /tmp/pkgroot
-    apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age zstd aws-cli unzip
+    apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age zstd aws-cli unzip curl jq
     export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
 
     AWS_PY="/tmp/pkgroot/usr/bin/python3"
@@ -19,6 +19,8 @@ data:
     AGE_KEYGEN="/tmp/pkgroot/usr/bin/age-keygen"
     ZSTD="/tmp/pkgroot/usr/bin/zstd"
     UNZIP="/tmp/pkgroot/usr/bin/unzip"
+    CURL="/tmp/pkgroot/usr/bin/curl"
+    JQ="/tmp/pkgroot/usr/bin/jq"
 
     ARCHIVE="/tmp/${APP_NAME}-${RUN_ID}.tar.zst"
     echo "Compressing /data..."
@@ -53,15 +55,15 @@ data:
       --endpoint-url https://s3.eu-central-003.backblazeb2.com
 
     echo "Storing Chain A key in Azure Key Vault..."
-    AZ_TOKEN=$(curl -s -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
+    AZ_TOKEN=$($CURL -s -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
       -d "grant_type=client_credentials&client_id=${AZURE_CLIENT_ID}&client_secret=${AZURE_CLIENT_SECRET}&scope=https://vault.azure.net/.default" \
-      | jq -r '.access_token')
-    curl -s -X PUT "https://kv-solsys-chainb.vault.azure.net/secrets/${APP_NAME}-${RUN_ID}?api-version=7.4" \
+      | $JQ -r '.access_token')
+    $CURL -s -X PUT "https://kv-solsys-chainb.vault.azure.net/secrets/${APP_NAME}-${RUN_ID}?api-version=7.4" \
       -H "Authorization: Bearer $AZ_TOKEN" -H "Content-Type: application/json" \
       -d "{\"value\":\"$CHAIN_A_PRIVKEY\"}"
 
     echo "Storing Chain B key in Bitwarden Secrets Manager..."
-    curl -sL https://github.com/bitwarden/sdk-sm/releases/latest/download/bws-x86_64-unknown-linux-musl.zip -o /tmp/bws.zip
+    $CURL -sL https://github.com/bitwarden/sdk-sm/releases/latest/download/bws-x86_64-unknown-linux-musl.zip -o /tmp/bws.zip
     "$UNZIP" -o /tmp/bws.zip -d /tmp
     /tmp/bws secret create "${APP_NAME}-${RUN_ID}" "$CHAIN_B_PRIVKEY" "$BW_PROJECT_ID" \
       --access-token "$BW_ACCESS_TOKEN" --api-url https://api.bitwarden.eu --identity-url https://identity.bitwarden.eu
