@@ -11,41 +11,44 @@ data:
     echo "Installing age, zstd, aws-cli, unzip into alternate root..."
     mkdir -p /tmp/pkgroot
     apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age zstd aws-cli unzip
-    export PATH="/tmp/pkgroot/usr/bin:/tmp/pkgroot/bin:$PATH"
     export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
+
+    AWS="/tmp/pkgroot/usr/bin/aws"
+    AGE="/tmp/pkgroot/usr/bin/age"
+    AGE_KEYGEN="/tmp/pkgroot/usr/bin/age-keygen"
+    ZSTD="/tmp/pkgroot/usr/bin/zstd"
+    UNZIP="/tmp/pkgroot/usr/bin/unzip"
 
     ARCHIVE="/tmp/${APP_NAME}-${RUN_ID}.tar.zst"
     echo "Compressing /data..."
-    tar -C /data -cf - . | zstd -T0 -o "$ARCHIVE"
+    tar -C /data -cf - . | "$ZSTD" -T0 -o "$ARCHIVE"
 
     echo "Generating Chain A keypair..."
-    age-keygen -o /tmp/chain-a.key 2>/tmp/chain-a-pub.txt
+    "$AGE_KEYGEN" -o /tmp/chain-a.key 2>/tmp/chain-a-pub.txt
     CHAIN_A_PUBKEY=$(grep "Public key:" /tmp/chain-a-pub.txt | awk '{print $NF}')
     CHAIN_A_PRIVKEY=$(cat /tmp/chain-a.key)
 
     echo "Generating Chain B keypair..."
-    age-keygen -o /tmp/chain-b.key 2>/tmp/chain-b-pub.txt
+    "$AGE_KEYGEN" -o /tmp/chain-b.key 2>/tmp/chain-b-pub.txt
     CHAIN_B_PUBKEY=$(grep "Public key:" /tmp/chain-b-pub.txt | awk '{print $NF}')
     CHAIN_B_PRIVKEY=$(cat /tmp/chain-b.key)
 
     echo "Encrypting for Chain A..."
-    age -r "$CHAIN_A_PUBKEY" -o "${ARCHIVE}.chainA.age" "$ARCHIVE"
+    "$AGE" -r "$CHAIN_A_PUBKEY" -o "${ARCHIVE}.chainA.age" "$ARCHIVE"
 
     echo "Encrypting for Chain B..."
-    age -r "$CHAIN_B_PUBKEY" -o "${ARCHIVE}.chainB.age" "$ARCHIVE"
+    "$AGE" -r "$CHAIN_B_PUBKEY" -o "${ARCHIVE}.chainB.age" "$ARCHIVE"
 
     echo "Uploading Chain A blob to OVHcloud..."
-    echo "DEBUG PATH at upload time: $PATH"
-    which aws || echo "DEBUG: aws STILL not found right before invocation"
     export AWS_ACCESS_KEY_ID="$OVH_S3_ACCESS_KEY"
     export AWS_SECRET_ACCESS_KEY="$OVH_S3_SECRET_KEY"
-    aws s3 cp "${ARCHIVE}.chainA.age" "s3://scopuli-chain-a-backup/${APP_NAME}-${RUN_ID}.age" \
+    "$AWS" s3 cp "${ARCHIVE}.chainA.age" "s3://scopuli-chain-a-backup/${APP_NAME}-${RUN_ID}.age" \
       --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net
 
     echo "Uploading Chain B blob to Backblaze..."
     export AWS_ACCESS_KEY_ID="$B2_KEY_ID"
     export AWS_SECRET_ACCESS_KEY="$B2_KEY_SECRET"
-    aws s3 cp "${ARCHIVE}.chainB.age" "s3://barbapiccola-chain-b-backup/${APP_NAME}-${RUN_ID}.age" \
+    "$AWS" s3 cp "${ARCHIVE}.chainB.age" "s3://barbapiccola-chain-b-backup/${APP_NAME}-${RUN_ID}.age" \
       --endpoint-url https://s3.eu-central-003.backblazeb2.com
 
     echo "Storing Chain A key in Azure Key Vault..."
@@ -58,7 +61,7 @@ data:
 
     echo "Storing Chain B key in Bitwarden Secrets Manager..."
     curl -sL https://github.com/bitwarden/sdk-sm/releases/latest/download/bws-x86_64-unknown-linux-musl.zip -o /tmp/bws.zip
-    unzip -o /tmp/bws.zip -d /tmp
+    "$UNZIP" -o /tmp/bws.zip -d /tmp
     /tmp/bws secret create "${APP_NAME}-${RUN_ID}" "$CHAIN_B_PRIVKEY" "$BW_PROJECT_ID" \
       --access-token "$BW_ACCESS_TOKEN" --api-url https://api.bitwarden.eu --identity-url https://identity.bitwarden.eu
 
