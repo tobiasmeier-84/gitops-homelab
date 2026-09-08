@@ -2,13 +2,16 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: backup-worker-script
-  namespace: rocinante
+  namespace: {{ .Values.namespace }}
 data:
   backup-worker.sh: |
     #!/bin/sh
     set -e
 
-    apk add --no-cache age zstd tar aws-cli curl jq unzip
+    echo "Installing age and zstd into alternate root..."
+    mkdir -p /tmp/pkgroot
+    apk add --no-cache --root /tmp/pkgroot --initdb age zstd
+    export PATH="/tmp/pkgroot/usr/bin:/tmp/pkgroot/bin:$PATH"
 
     ARCHIVE="/tmp/${APP_NAME}-${RUN_ID}.tar.zst"
     echo "Compressing /data..."

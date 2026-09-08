@@ -33,7 +33,7 @@ module "enceladus" {
 
   disks = [
     { datastore_id = "razorback", size = 40, interface = "scsi0" },   # OS + etcd
-    { datastore_id = "canterbury", size = 500, interface = "scsi1" }, # Longhorn bulk
+    { datastore_id = "canterbury", size = 900, interface = "scsi1" }, # Longhorn bulk
     { datastore_id = "tachi", size = 100, interface = "scsi2" },       # Longhorn DB tier
   ]
 
@@ -85,7 +85,7 @@ module "mimas" {
 
   disks = [
     { datastore_id = "razorback", size = 40, interface = "scsi0" },
-    { datastore_id = "canterbury", size = 500, interface = "scsi1" },
+    { datastore_id = "canterbury", size = 900, interface = "scsi1" },
     { datastore_id = "tachi", size = 100, interface = "scsi2" },
   ]
 
@@ -121,7 +121,7 @@ module "rhea" {
 
   disks = [
     { datastore_id = "razorback", size = 40, interface = "scsi0" },
-    { datastore_id = "canterbury", size = 500, interface = "scsi1" },
+    { datastore_id = "canterbury", size = 900, interface = "scsi1" },
     { datastore_id = "tachi", size = 100, interface = "scsi2" },
   ]
 
