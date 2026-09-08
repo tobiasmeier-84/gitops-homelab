@@ -13,6 +13,7 @@ data:
     apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age zstd aws-cli unzip
     export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
 
+    AWS_PY="/tmp/pkgroot/usr/bin/python3"
     AWS="/tmp/pkgroot/usr/bin/aws"
     AGE="/tmp/pkgroot/usr/bin/age"
     AGE_KEYGEN="/tmp/pkgroot/usr/bin/age-keygen"
@@ -42,13 +43,13 @@ data:
     echo "Uploading Chain A blob to OVHcloud..."
     export AWS_ACCESS_KEY_ID="$OVH_S3_ACCESS_KEY"
     export AWS_SECRET_ACCESS_KEY="$OVH_S3_SECRET_KEY"
-    "$AWS" s3 cp "${ARCHIVE}.chainA.age" "s3://scopuli-chain-a-backup/${APP_NAME}-${RUN_ID}.age" \
+    "$AWS_PY" "$AWS" s3 cp "${ARCHIVE}.chainA.age" "s3://scopuli-chain-a-backup/${APP_NAME}-${RUN_ID}.age" \
       --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net
 
     echo "Uploading Chain B blob to Backblaze..."
     export AWS_ACCESS_KEY_ID="$B2_KEY_ID"
     export AWS_SECRET_ACCESS_KEY="$B2_KEY_SECRET"
-    "$AWS" s3 cp "${ARCHIVE}.chainB.age" "s3://barbapiccola-chain-b-backup/${APP_NAME}-${RUN_ID}.age" \
+    "$AWS_PY" "$AWS" s3 cp "${ARCHIVE}.chainB.age" "s3://barbapiccola-chain-b-backup/${APP_NAME}-${RUN_ID}.age" \
       --endpoint-url https://s3.eu-central-003.backblazeb2.com
 
     echo "Storing Chain A key in Azure Key Vault..."
