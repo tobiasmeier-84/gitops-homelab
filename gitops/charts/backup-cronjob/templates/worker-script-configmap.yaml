@@ -69,4 +69,46 @@ data:
     /tmp/bws secret create --access-token "$BW_ACCESS_TOKEN" "${APP_NAME}-${RUN_ID}" "$CHAIN_B_PRIVKEY" "$BW_PROJECT_ID" > /dev/null
     echo "Bitwarden secret stored successfully"
 
+    echo "=== Pruning old backups (keeping 2 most recent per chain) ==="
+
+    echo "Pruning Chain A (OVHcloud)..."
+    export AWS_ACCESS_KEY_ID="$OVH_S3_ACCESS_KEY"
+    export AWS_SECRET_ACCESS_KEY="$OVH_S3_SECRET_KEY"
+    CHAIN_A_OLD=$("$AWS_PY" "$AWS" s3 ls "s3://scopuli-chain-a-backup/" --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net \
+      | awk '{print $4}' | grep "^${APP_NAME}-" | sort -r | tail -n +3)
+    for OLD_BLOB in $CHAIN_A_OLD; do
+      OLD_RUN_ID=$(echo "$OLD_BLOB" | sed "s/^${APP_NAME}-//;s/\.age$//")
+      echo "Deleting old Chain A blob: $OLD_BLOB (run_id: $OLD_RUN_ID)"
+      "$AWS_PY" "$AWS" s3 rm "s3://scopuli-chain-a-backup/${OLD_BLOB}" --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net
+      echo "Deleting corresponding Azure Key Vault secret: ${APP_NAME}-${OLD_RUN_ID}"
+      AZ_TOKEN=$(curl -sk -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
+        -d "grant_type=client_credentials&client_id=${AZURE_CLIENT_ID}&client_secret=${AZURE_CLIENT_SECRET}&scope=https://vault.azure.net/.default" \
+        | "$JQ" -r '.access_token')
+      curl -sk -X DELETE "https://kv-solsys-chainb.vault.azure.net/secrets/${APP_NAME}-${OLD_RUN_ID}?api-version=7.4" \
+        -H "Authorization: Bearer $AZ_TOKEN" -o /dev/null -w "  delete: HTTP %{http_code}\n"
+      curl -sk -X DELETE "https://kv-solsys-chainb.vault.azure.net/deletedsecrets/${APP_NAME}-${OLD_RUN_ID}?api-version=7.4" \
+        -H "Authorization: Bearer $AZ_TOKEN" -o /dev/null -w "  purge: HTTP %{http_code}\n"
+    done
+
+    echo "Pruning Chain B (Backblaze)..."
+    export AWS_ACCESS_KEY_ID="$B2_KEY_ID"
+    export AWS_SECRET_ACCESS_KEY="$B2_KEY_SECRET"
+    CHAIN_B_OLD=$("$AWS_PY" "$AWS" s3 ls "s3://barbapiccola-chain-b-backup/" --endpoint-url https://s3.eu-central-003.backblazeb2.com \
+      | awk '{print $4}' | grep "^${APP_NAME}-" | sort -r | tail -n +3)
+    export BWS_SERVER_URL="https://vault.bitwarden.eu"
+    for OLD_BLOB in $CHAIN_B_OLD; do
+      OLD_RUN_ID=$(echo "$OLD_BLOB" | sed "s/^${APP_NAME}-//;s/\.age$//")
+      echo "Deleting old Chain B blob: $OLD_BLOB (run_id: $OLD_RUN_ID)"
+      "$AWS_PY" "$AWS" s3 rm "s3://barbapiccola-chain-b-backup/${OLD_BLOB}" --endpoint-url https://s3.eu-central-003.backblazeb2.com
+      echo "Deleting corresponding Bitwarden secret: ${APP_NAME}-${OLD_RUN_ID}"
+      OLD_SECRET_ID=$(/tmp/bws secret list "$BW_PROJECT_ID" --access-token "$BW_ACCESS_TOKEN" \
+        | "$JQ" -r ".[] | select(.key==\"${APP_NAME}-${OLD_RUN_ID}\") | .id")
+      if [ -n "$OLD_SECRET_ID" ]; then
+        /tmp/bws secret delete "$OLD_SECRET_ID" --access-token "$BW_ACCESS_TOKEN" > /dev/null
+        echo "  deleted secret $OLD_SECRET_ID"
+      else
+        echo "  WARNING: could not find matching Bitwarden secret for ${APP_NAME}-${OLD_RUN_ID}"
+      fi
+    done
+
     echo "MANIFEST_ENTRY:{\"run_id\":\"${RUN_ID}\",\"app\":\"${APP_NAME}\",\"chainA_blob\":\"${APP_NAME}-${RUN_ID}.age\",\"chainA_key_ref\":\"azure-kv:${APP_NAME}-${RUN_ID}\",\"chainB_blob\":\"${APP_NAME}-${RUN_ID}.age\",\"chainB_key_ref\":\"bitwarden:${APP_NAME}-${RUN_ID}\"}"

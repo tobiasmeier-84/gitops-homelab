@@ -140,22 +140,4 @@ spec:
                   echo "=== Worker logs ==="
                   kubectl logs "$WORKER_POD" -n "$NAMESPACE" | tee /tmp/worker-output.log
 
-                  # MANIFEST_LINE=$(grep '^MANIFEST_ENTRY:' /tmp/worker-output.log | sed 's/^MANIFEST_ENTRY://')
-                  # if [ -n "$MANIFEST_LINE" ]; then
-                  #   echo "Recording manifest entry: $MANIFEST_LINE"
-                  #   apk add --no-cache openssh-client git
-                  #   mkdir -p ~/.ssh
-                  #   ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
-                  #   git clone git@github.com:tobiasmeier-84/gitops-homelab.git /tmp/repo
-                  #   echo "$MANIFEST_LINE" >> /tmp/repo/backups/manifest.jsonl
-                  #   cd /tmp/repo
-                  #   git config user.email "backup-bot@solsys.dev"
-                  #   git config user.name "Backup Bot"
-                  #   git add backups/manifest.jsonl
-                  #   git commit -m "Backup run $RUN_ID for $APP_NAME"
-                  #   git push
-                  # else
-                  #   echo "ERROR: no manifest entry found in worker output"
-                  #   exit 1
-                  # fi
-                  echo "Backup run $RUN_ID complete (manifest recording temporarily disabled)"
+                  echo "Backup run $RUN_ID complete"
