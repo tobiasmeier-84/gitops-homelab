@@ -63,7 +63,7 @@ data:
       -d "{\"value\":\"$CHAIN_A_PRIVKEY\"}"
 
     echo "Storing Chain B key in Bitwarden Secrets Manager..."
-    $CURL -sL https://github.com/bitwarden/sdk-sm/releases/latest/download/bws-x86_64-unknown-linux-musl.zip -o /tmp/bws.zip
+    $CURL -sL https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-x86_64-unknown-linux-musl-2.1.0.zip -o /tmp/bws.zip
     "$UNZIP" -o /tmp/bws.zip -d /tmp
     /tmp/bws secret create "${APP_NAME}-${RUN_ID}" "$CHAIN_B_PRIVKEY" "$BW_PROJECT_ID" \
       --access-token "$BW_ACCESS_TOKEN" --api-url https://api.bitwarden.eu --identity-url https://identity.bitwarden.eu
