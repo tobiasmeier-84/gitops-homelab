@@ -36,6 +36,8 @@ spec:
                   value: "{{ .Values.pvcSize }}"
                 - name: STORAGE_CLASS
                   value: "{{ .Values.storageClassName }}"
+                - name: WORKER_RUN_AS_USER
+                  value: "{{ .Values.workerRunAsUser }}"
               envFrom:
                 - secretRef:
                     name: backup-chain-credentials
@@ -100,7 +102,7 @@ spec:
                     restartPolicy: Never
                     securityContext:
                       runAsNonRoot: true
-                      runAsUser: 1000
+                      runAsUser: $WORKER_RUN_AS_USER
                       seccompProfile:
                         type: RuntimeDefault
                     containers:
