@@ -8,19 +8,11 @@ data:
     #!/bin/sh
     set -e
 
-    echo "Installing age and zstd into alternate root..."
+    echo "Installing age, zstd, aws-cli, unzip into alternate root..."
     mkdir -p /tmp/pkgroot
-    echo "=== DEBUG: initial PATH is: $PATH ==="
-    echo "=== DEBUG: full env ==="
-    env
     apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age zstd aws-cli unzip
     export PATH="/tmp/pkgroot/usr/bin:/tmp/pkgroot/bin:$PATH"
-    export PATH="/tmp/pkgroot/usr/bin:/tmp/pkgroot/bin:$PATH"
     export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
-
-    echo "Checking aws availability..."
-    which aws || echo "aws not in PATH: $PATH"
-    ls -la /usr/bin/aws 2>&1 || echo "aws binary not found at expected location"
 
     ARCHIVE="/tmp/${APP_NAME}-${RUN_ID}.tar.zst"
     echo "Compressing /data..."
@@ -43,6 +35,8 @@ data:
     age -r "$CHAIN_B_PUBKEY" -o "${ARCHIVE}.chainB.age" "$ARCHIVE"
 
     echo "Uploading Chain A blob to OVHcloud..."
+    echo "DEBUG PATH at upload time: $PATH"
+    which aws || echo "DEBUG: aws STILL not found right before invocation"
     export AWS_ACCESS_KEY_ID="$OVH_S3_ACCESS_KEY"
     export AWS_SECRET_ACCESS_KEY="$OVH_S3_SECRET_KEY"
     aws s3 cp "${ARCHIVE}.chainA.age" "s3://scopuli-chain-a-backup/${APP_NAME}-${RUN_ID}.age" \
