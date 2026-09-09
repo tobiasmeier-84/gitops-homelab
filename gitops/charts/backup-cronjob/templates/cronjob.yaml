@@ -127,11 +127,6 @@ spec:
                             readOnly: true
                           - name: script
                             mountPath: /scripts
-                        resources:
-                          requests:
-                            ephemeral-storage: "50Gi"
-                          limits:
-                            ephemeral-storage: "80Gi"
                     volumes:
                       - name: data
                         persistentVolumeClaim:

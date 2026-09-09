@@ -32,7 +32,7 @@ module "enceladus" {
   ssh_public_key = var.vm_ssh_public_key
 
   disks = [
-    { datastore_id = "razorback", size = 40, interface = "scsi0" },   # OS + etcd
+    { datastore_id = "razorback", size = 300, interface = "scsi0" },   # OS + etcd
     { datastore_id = "canterbury", size = 900, interface = "scsi1" }, # Longhorn bulk
     { datastore_id = "tachi", size = 100, interface = "scsi2" },       # Longhorn DB tier
   ]
@@ -84,7 +84,7 @@ module "mimas" {
   ssh_public_key = var.vm_ssh_public_key
 
   disks = [
-    { datastore_id = "razorback", size = 40, interface = "scsi0" },
+    { datastore_id = "razorback", size = 300, interface = "scsi0" },
     { datastore_id = "canterbury", size = 900, interface = "scsi1" },
     { datastore_id = "tachi", size = 100, interface = "scsi2" },
   ]
@@ -120,7 +120,7 @@ module "rhea" {
   ssh_public_key = var.vm_ssh_public_key
 
   disks = [
-    { datastore_id = "razorback", size = 40, interface = "scsi0" },
+    { datastore_id = "razorback", size = 300, interface = "scsi0" },
     { datastore_id = "canterbury", size = 900, interface = "scsi1" },
     { datastore_id = "tachi", size = 100, interface = "scsi2" },
   ]
