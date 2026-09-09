@@ -136,7 +136,7 @@ spec:
                           name: backup-worker-script
                           defaultMode: 0755
                   EOF
-                  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$WORKER_POD -n "$NAMESPACE" --timeout=3600s
+                  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$WORKER_POD -n "$NAMESPACE" --timeout=900s
                   echo "=== Worker logs ==="
                   kubectl logs "$WORKER_POD" -n "$NAMESPACE" | tee /tmp/worker-output.log
 
