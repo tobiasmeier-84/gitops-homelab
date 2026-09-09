@@ -24,7 +24,7 @@ data:
     JQ="/tmp/pkgroot/usr/bin/jq"
 
     ARCHIVE="/tmp/${APP_NAME}-${RUN_ID}.tar.zst"
-    echo "Compressing /data..."
+    echo "Compressing /data (single intermediate file, deleted after upload)..."
     tar -C /data -cf - . | "$ZSTD" -T0 -o "$ARCHIVE"
 
     echo "Generating Chain A keypair..."
@@ -37,23 +37,20 @@ data:
     CHAIN_B_PUBKEY=$(grep "Public key:" /tmp/chain-b-pub.txt | awk '{print $NF}')
     CHAIN_B_PRIVKEY=$(cat /tmp/chain-b.key)
 
-    echo "Encrypting for Chain A..."
-    "$AGE" -r "$CHAIN_A_PUBKEY" -o "${ARCHIVE}.chainA.age" "$ARCHIVE"
-
-    echo "Encrypting for Chain B..."
-    "$AGE" -r "$CHAIN_B_PUBKEY" -o "${ARCHIVE}.chainB.age" "$ARCHIVE"
-
-    echo "Uploading Chain A blob to OVHcloud..."
+    echo "Encrypting and uploading Chain A blob to OVHcloud (streamed, no intermediate file)..."
     export AWS_ACCESS_KEY_ID="$OVH_S3_ACCESS_KEY"
     export AWS_SECRET_ACCESS_KEY="$OVH_S3_SECRET_KEY"
-    "$AWS_PY" "$AWS" s3 cp "${ARCHIVE}.chainA.age" "s3://scopuli-chain-a-backup/${APP_NAME}-${RUN_ID}.age" \
+    "$AGE" -r "$CHAIN_A_PUBKEY" "$ARCHIVE" | "$AWS_PY" "$AWS" s3 cp - "s3://scopuli-chain-a-backup/${APP_NAME}-${RUN_ID}.age" \
       --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net
 
-    echo "Uploading Chain B blob to Backblaze..."
+    echo "Encrypting and uploading Chain B blob to Backblaze (streamed, no intermediate file)..."
     export AWS_ACCESS_KEY_ID="$B2_KEY_ID"
     export AWS_SECRET_ACCESS_KEY="$B2_KEY_SECRET"
-    "$AWS_PY" "$AWS" s3 cp "${ARCHIVE}.chainB.age" "s3://barbapiccola-chain-b-backup/${APP_NAME}-${RUN_ID}.age" \
+    "$AGE" -r "$CHAIN_B_PUBKEY" "$ARCHIVE" | "$AWS_PY" "$AWS" s3 cp - "s3://barbapiccola-chain-b-backup/${APP_NAME}-${RUN_ID}.age" \
       --endpoint-url https://s3.eu-central-003.backblazeb2.com
+
+    echo "Removing compressed archive (no longer needed)..."
+    rm -f "$ARCHIVE"
 
     echo "Storing Chain A key in Azure Key Vault..."
     AZ_TOKEN=$($CURL $CURL_OPTS -s -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
