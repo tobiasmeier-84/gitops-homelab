@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-notify-script
+  namespace: {{ .Values.namespace }}
+data:
+  notify.py: |
+    import smtplib
+    import os
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from email.mime.application import MIMEApplication
+
+    status = os.environ['STATUS']
+    run_id = os.environ['RUN_ID']
+    app_name = os.environ['APP_NAME']
+
+    msg = MIMEMultipart()
+    msg['From'] = "nextcloud@solsys.dev"
+    msg['To'] = os.environ['smtp_username']
+    msg['Subject'] = f"{app_name} backup {status}: {run_id}"
+    msg.attach(MIMEText(f"Backup run {run_id} for {app_name}: {status}.\n\nFull log attached (if available).", "plain"))
+
+    try:
+        with open("/tmp/worker-output.log", "rb") as f:
+            part = MIMEApplication(f.read(), Name=f"backup-{run_id}.log")
+        part['Content-Disposition'] = f'attachment; filename="backup-{run_id}.log"'
+        msg.attach(part)
+    except FileNotFoundError:
+        pass
+
+    s = smtplib.SMTP_SSL("mail.cyon.ch", 465)
+    s.login(os.environ['smtp_username'], os.environ['smtp_password'])
+    s.sendmail("nextcloud@solsys.dev", os.environ['smtp_username'], msg.as_string())
+    s.quit()
+    print("Notification sent.")

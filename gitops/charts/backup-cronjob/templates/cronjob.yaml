@@ -44,6 +44,9 @@ spec:
                     name: backup-chain-credentials
                 - secretRef:
                     name: rocinante-smtp-credentials
+              volumeMounts:
+                - name: notify-script
+                  mountPath: /scripts-notify
               command:
                 - /bin/sh
                 - -c
@@ -55,36 +58,7 @@ spec:
                   SCRATCH_PVC="${APP_NAME}-scratch-${RUN_ID}"
                   WORKER_POD="${APP_NAME}-worker-${RUN_ID}"
                   STATUS="UNKNOWN"
-
-                  send_notification() {
-                    python3 << PYEOF
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.application import MIMEApplication
-import os
-
-msg = MIMEMultipart()
-msg['From'] = "nextcloud@solsys.dev"
-msg['To'] = os.environ['smtp_username']
-msg['Subject'] = "Rocinante backup $STATUS: $RUN_ID"
-msg.attach(MIMEText("Backup run $RUN_ID for rocinante: $STATUS.\n\nFull log attached (if available).", "plain"))
-
-try:
-    with open("/tmp/worker-output.log", "rb") as f:
-        part = MIMEApplication(f.read(), Name="backup-${RUN_ID}.log")
-    part['Content-Disposition'] = 'attachment; filename="backup-${RUN_ID}.log"'
-    msg.attach(part)
-except FileNotFoundError:
-    pass
-
-s = smtplib.SMTP_SSL("mail.cyon.ch", 465)
-s.login(os.environ['smtp_username'], os.environ['smtp_password'])
-s.sendmail("nextcloud@solsys.dev", os.environ['smtp_username'], msg.as_string())
-s.quit()
-print("Notification sent.")
-PYEOF
-                  }
+                  export RUN_ID APP_NAME
 
                   cleanup() {
                     echo "Cleaning up..."
@@ -93,7 +67,8 @@ PYEOF
                     kubectl delete pvc "$RESTORE_PVC" -n "$NAMESPACE" --ignore-not-found=true
                     kubectl delete pvc "$SCRATCH_PVC" -n "$NAMESPACE" --ignore-not-found=true
                     kubectl delete volumesnapshot "$SNAP_NAME" -n "$NAMESPACE" --ignore-not-found=true
-                    send_notification
+                    export STATUS
+                    python3 /scripts-notify/notify.py || echo "WARNING: notification failed to send"
                   }
                   trap cleanup EXIT
 
@@ -207,3 +182,7 @@ PYEOF
                     STATUS="FAILED"
                   fi
                   echo "Backup run $RUN_ID: $STATUS"
+          volumes:
+            - name: notify-script
+              configMap:
+                name: backup-notify-script
