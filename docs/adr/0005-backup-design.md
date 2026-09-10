@@ -317,3 +317,112 @@ failure as proof the config itself is wrong.
   provisioned on both legs.
 - Chain B (Backblaze B2 data + Bitwarden Secrets Manager key) remains
   to be built.
+
+
+## Addendum: backup worker implementation, real scaling limit found and fixed
+
+**Status:** The full dual-chain backup pipeline (snapshot → restore →
+compress → dual-encrypt → dual-upload → dual-key-storage → retention
+pruning) is implemented and verified working end-to-end, including
+real data uploads to both OVHcloud and Backblaze, real key storage in
+both Azure Key Vault and Bitwarden, and real pruning of both data
+blobs and their matching keys.
+
+### The real scaling ceiling, found through actual testing — not the one originally assumed
+
+Early testing revealed the binding constraint wasn't Longhorn's
+`canterbury` storage pool (hundreds of GB free) — it was the RKE2
+nodes' own **OS root disk**, originally provisioned at just 40GB per
+node. The worker pod's compression step wrote its intermediate
+archive to node-local `/tmp`, and with real data (~150GB+), this
+exhausted the root disk's genuine free space, causing Kubernetes to
+evict the pod outright (`low on resource: ephemeral-storage`) — a
+failure mode that looked like a stuck/hung pipeline in earlier testing
+but was actually a hard resource ceiling.
+
+### Two-part fix: bigger root disks now, dedicated scratch storage for the real long-term fix
+
+1. **Immediate relief**: grown all three RKE2 nodes' root disk from
+   40GB to 300GB (live, in-place resize via OpenTofu + `growpart` +
+   `resize2fs`, no downtime — confirmed via `pvesm status` that the
+   underlying `razorback` ZFS pool had genuine headroom, ~380GB free
+   at the time, with a deliberate 20% reserve maintained).
+2. **The real, permanent fix**: the worker pod no longer uses node-local
+   disk for scratch space at all. A dedicated, disposable PVC
+   (`longhorn-bulk-single-replica` class, same proven class used for
+   the restore volume) is created and destroyed alongside every backup
+   run, mounted at `/scratch`. This decouples the maximum backup size
+   from the node's own boot disk entirely — the real ceiling is now
+   `canterbury`'s pool capacity (hundreds of GB free per node,
+   independently resizable later without ever touching a node's OS
+   disk again).
+
+### Also fixed in the same implementation pass: streaming encryption, eliminating a second storage multiplier
+
+The original design wrote the compressed archive, then wrote two full
+*separate* encrypted copies (one per chain) before uploading — meaning
+peak local storage usage was roughly 3x the compressed archive's size.
+The corrected worker script pipes `age`'s encryption output directly
+into the upload command (`age ... | aws s3 cp -`), so no encrypted
+blob ever touches disk at all. Combined with the scratch-PVC move,
+peak storage usage during a backup run is now just the compressed
+archive's own size — the real, permanent floor.
+
+### Retention and pruning, implemented as designed
+
+Confirmed working: after each successful upload, the worker lists
+existing backups per chain, keeps the 2 most recent, and deletes
+anything older — both the data blob *and* its matching key in the
+corresponding vault (Azure Key Vault secret delete+purge; Bitwarden
+secret delete by matching key name). Pruning only runs after a
+genuinely complete, successful new backup — `set -e` guarantees any
+earlier failure (compression, either upload, either key-storage step)
+exits before pruning code is ever reached, so old backups can never be
+deleted without a verified-successful replacement already in place.
+
+### Hard-won lessons from this implementation, worth remembering for any future non-root Alpine worker container
+
+- **Never trust a base image's pre-installed tools** — `alpine/k8s`
+  claiming to include `aws`/`curl`/`jq` proved unreliable in practice
+  (confirmed present in isolated test pods, then genuinely absent in
+  the real worker pod using the identical image tag and security
+  context — cause never fully explained). The reliable fix: self-install
+  every tool explicitly via `apk add --root /tmp/pkgroot`, never
+  assume anything is already there.
+- **`apk --root --initdb` needs `--repositories-file` and
+  `--allow-untrusted`** — a fresh alternate root has no repository
+  list and no trusted signing keys by default; omit either and package
+  resolution/installation fails outright.
+- **Post-install trigger scripts (busybox, ca-certificates) fail
+  under non-root** (`chroot: Operation not permitted`) — genuinely
+  harmless given none of their output is relied on (we call every tool
+  via absolute path, never depend on busybox's symlinks or the
+  consolidated CA bundle) — don't let `set -e` treat this as fatal.
+- **A binary with an embedded shebang path** (`aws`'s
+  `#!/usr/bin/python3`) **will fail if that exact absolute path
+  doesn't exist in the container**, even though the file itself is
+  present and executable — invoke the real interpreter explicitly
+  rather than rely on the shebang.
+- **Never combine a binary path and a flag into one shell variable**
+  or quote them together — `CURL="/path/curl -k"` invoked as `"$CURL"`
+  makes the shell search for one literal, non-existent command; keep
+  the flag in a separate variable, invoked unquoted.
+- **`fsGroup` alone does not guarantee read access** — a directory
+  with no group-read bit at all (Nextcloud's own `data/` folder,
+  `drwxrws---`) genuinely requires running as the actual owning UID,
+  not just adding group membership.
+- **GitHub release asset filenames often embed the version number
+  explicitly** — a "latest, no version" URL guess can silently 404,
+  and `curl` will happily "succeed" downloading that error page as if
+  it were the real file.
+- **`kubectl logs` output is not a safe place for secrets** —
+  suppress API response bodies (`-o /dev/null -w "...%{http_code}\n"`)
+  for any call that echoes back the sensitive value it was just sent.
+
+### Remaining, deliberately deferred
+- Manifest/audit-trail recording (git-committed log of which blob
+  pairs with which key) — decided unnecessary given only 2 backups
+  ever exist per chain at once, trivially distinguished by embedded
+  timestamp.
+- Applying this same reusable `backup-cronjob` chart to additional
+  apps beyond Rocinante.
