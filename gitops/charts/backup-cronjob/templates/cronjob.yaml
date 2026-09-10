@@ -8,6 +8,7 @@ spec:
   concurrencyPolicy: Forbid
   jobTemplate:
     spec:
+      ttlSecondsAfterFinished: 86400
       backoffLimit: 0
       template:
         spec:
@@ -41,6 +42,8 @@ spec:
               envFrom:
                 - secretRef:
                     name: backup-chain-credentials
+                - secretRef:
+                    name: rocinante-smtp-credentials
               command:
                 - /bin/sh
                 - -c
@@ -51,13 +54,46 @@ spec:
                   RESTORE_PVC="${APP_NAME}-restore-${RUN_ID}"
                   SCRATCH_PVC="${APP_NAME}-scratch-${RUN_ID}"
                   WORKER_POD="${APP_NAME}-worker-${RUN_ID}"
+                  STATUS="UNKNOWN"
+
+                  send_notification() {
+                    python3 << PYEOF
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
+import os
+
+msg = MIMEMultipart()
+msg['From'] = "nextcloud@solsys.dev"
+msg['To'] = os.environ['smtp_username']
+msg['Subject'] = "Rocinante backup $STATUS: $RUN_ID"
+msg.attach(MIMEText("Backup run $RUN_ID for rocinante: $STATUS.\n\nFull log attached (if available).", "plain"))
+
+try:
+    with open("/tmp/worker-output.log", "rb") as f:
+        part = MIMEApplication(f.read(), Name="backup-${RUN_ID}.log")
+    part['Content-Disposition'] = 'attachment; filename="backup-${RUN_ID}.log"'
+    msg.attach(part)
+except FileNotFoundError:
+    pass
+
+s = smtplib.SMTP_SSL("mail.cyon.ch", 465)
+s.login(os.environ['smtp_username'], os.environ['smtp_password'])
+s.sendmail("nextcloud@solsys.dev", os.environ['smtp_username'], msg.as_string())
+s.quit()
+print("Notification sent.")
+PYEOF
+                  }
 
                   cleanup() {
                     echo "Cleaning up..."
+                    kubectl logs "$WORKER_POD" -n "$NAMESPACE" > /tmp/worker-output.log 2>&1 || echo "(no worker log available)" > /tmp/worker-output.log
                     kubectl delete pod "$WORKER_POD" -n "$NAMESPACE" --ignore-not-found=true
                     kubectl delete pvc "$RESTORE_PVC" -n "$NAMESPACE" --ignore-not-found=true
                     kubectl delete pvc "$SCRATCH_PVC" -n "$NAMESPACE" --ignore-not-found=true
                     kubectl delete volumesnapshot "$SNAP_NAME" -n "$NAMESPACE" --ignore-not-found=true
+                    send_notification
                   }
                   trap cleanup EXIT
 
@@ -165,8 +201,9 @@ spec:
                           claimName: $SCRATCH_PVC
                   EOF
 
-                  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$WORKER_POD -n "$NAMESPACE" --timeout=28800s
-
-                  echo "=== Worker logs ==="
-                  kubectl logs "$WORKER_POD" -n "$NAMESPACE"
-                  echo "Backup run $RUN_ID complete (manifest recording disabled — only 2 backups exist per chain, trivially distinguished by timestamp)"
+                  if kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$WORKER_POD -n "$NAMESPACE" --timeout=28800s; then
+                    STATUS="SUCCEEDED"
+                  else
+                    STATUS="FAILED"
+                  fi
+                  echo "Backup run $RUN_ID: $STATUS"
