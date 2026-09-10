@@ -16,9 +16,9 @@
   register: lsblk_output
   changed_when: false
 
-- name: Identify canterbury device (bulk disk, ~500GB)
+- name: Identify canterbury device (bulk disk, ~900GB after Sept 2026 resize)
   shell: |
-    echo "{{ lsblk_output.stdout }}" | awk '$2 > 450000000000 && $2 < 550000000000 {print "/dev/"$1}'
+    echo "{{ lsblk_output.stdout }}" | awk '$2 > 800000000000 && $2 < 1000000000000 {print "/dev/"$1}'
   register: canterbury_device_result
   changed_when: false
 
