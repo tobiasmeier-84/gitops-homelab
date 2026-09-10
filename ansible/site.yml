@@ -85,3 +85,8 @@
   hosts: rke2_nodes
   roles:
     - backup-credentials-secret
+
+- name: Configure kubectl convenience env for RKE2 nodes
+  hosts: rke2_nodes
+  roles:
+    - rke2-kubectl-env
