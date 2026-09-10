@@ -125,6 +125,7 @@ spec:
                     securityContext:
                       runAsNonRoot: true
                       runAsUser: $WORKER_RUN_AS_USER
+                      fsGroup: $WORKER_RUN_AS_USER
                       seccompProfile:
                         type: RuntimeDefault
                     containers:
