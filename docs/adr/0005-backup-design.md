@@ -426,3 +426,80 @@ deleted without a verified-successful replacement already in place.
   timestamp.
 - Applying this same reusable `backup-cronjob` chart to additional
   apps beyond Rocinante.
+
+## Addendum: real memory exhaustion incident during heavy backup testing, root cause and fix
+
+**Status:** A genuine production incident occurred during extensive
+same-day backup pipeline testing — root cause identified, confirmed
+resolved, real fix applied. No data loss occurred (verified via direct
+PostgreSQL row-count check before and after recovery).
+
+### What happened
+
+After many dozens of rapid backup test cycles in a single session
+(each spinning up and tearing down Longhorn snapshot/restore/scratch
+volumes, plus a `zstd -T0` compression process), the `rhea` RKE2 node
+reached **over 100% of its allocated 24GB RAM**. This triggered a
+cascade: multiple dynamically-attached Longhorn PVC devices
+(`sdd`/`sde`/`sdf`/`sdh` — the transient restore/scratch volumes from
+repeated testing, not the live application volumes) began throwing
+real ext4 I/O errors and remounting read-only, `longhorn-manager`'s
+instance-manager pod on `rhea` was recreated, and this cascaded into a
+cluster-wide pod restart event affecting live application pods
+(Barbapiccola/PostgreSQL, Nextcloud, Collabora).
+
+### Root cause, confirmed via direct investigation, not assumed
+
+1. **Physical storage was completely healthy throughout** — `zpool
+   status -v` on all three Proxmox hosts showed every pool `ONLINE`,
+   `0 0 0` errors, `No known data errors`, both before and after the
+   incident. The I/O errors were a symptom of memory pressure
+   corrupting the guest's I/O buffer/cache state, not any actual disk
+   or hardware fault.
+2. **`zstd -T0` uses every available CPU thread**, each with its own
+   compression window buffer — genuinely reasonable for a single run,
+   but memory usage from many rapid, consecutive test runs (plus
+   Longhorn's own per-volume engine/replica overhead) accumulated
+   faster than anticipated on a 24GB node.
+
+### Recovery
+
+A clean reboot of `rhea` fully resolved the incident — memory usage
+returned to normal (~2GB of 23GB) immediately after restart. Both
+affected application pods (`barbapiccola-1`, `rocinante-nextcloud`)
+self-healed via Kubernetes' normal restart/backoff mechanism within a
+few minutes, no manual data recovery needed. Data integrity confirmed
+via direct `SELECT COUNT(*)` against the live PostgreSQL database
+(`31,666` rows in `oc_filecache`), identical before and after the
+incident.
+
+### Fix applied: cap zstd's thread count to bound peak memory usage
+
+```bash
+"$ZSTD" -T4 -o "$ARCHIVE"
+```
+
+Changed from `-T0` (unlimited threads) to `-T4` — still genuinely fast
+for a background weekly job, while keeping peak memory usage
+predictable and bounded regardless of how many backup runs happen in
+quick succession (e.g., during testing/development).
+
+### Also fixed: leftover PVCs from interrupted test runs
+
+Several times during testing, PVCs from a previous, no-longer-running
+worker pod were found still present, contributing to real storage
+scheduling pressure and confusion during subsequent test runs. This
+reinforces the importance of the orchestrator's own `trap cleanup
+EXIT` logic — worth periodically auditing for leftover
+`*-restore-*`/`*-scratch-*` PVCs if testing is interrupted or a job is
+manually deleted before its own cleanup can run.
+
+### Lesson for future testing
+
+Repeated, rapid-fire manual test cycles (many runs within a single
+hour) place meaningfully more cumulative load on a node than the
+actual weekly production schedule ever will — genuinely useful for
+finding real bugs (as today's session did, repeatedly), but worth
+pacing deliberately during heavy debugging sessions, or testing
+against a node with more RAM headroom, to avoid tripping the same
+memory-exhaustion cascade again.
