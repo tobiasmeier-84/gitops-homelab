@@ -25,7 +25,7 @@ data:
 
     ARCHIVE="/scratch/${APP_NAME}-${RUN_ID}.tar.zst"
     echo "Compressing /data to scratch volume..."
-    tar -C /data -cf - . | "$ZSTD" -T0 -o "$ARCHIVE"
+    tar -C /data -cf - . | "$ZSTD" -T4 -o "$ARCHIVE"
 
     echo "Generating Chain A keypair..."
     "$AGE_KEYGEN" -o /tmp/chain-a.key 2>/tmp/chain-a-pub.txt
