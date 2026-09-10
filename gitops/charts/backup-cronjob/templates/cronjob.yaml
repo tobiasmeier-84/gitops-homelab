@@ -165,7 +165,7 @@ spec:
                           claimName: $SCRATCH_PVC
                   EOF
 
-                  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$WORKER_POD -n "$NAMESPACE" --timeout=5400s
+                  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$WORKER_POD -n "$NAMESPACE" --timeout=28800s
 
                   echo "=== Worker logs ==="
                   kubectl logs "$WORKER_POD" -n "$NAMESPACE"
