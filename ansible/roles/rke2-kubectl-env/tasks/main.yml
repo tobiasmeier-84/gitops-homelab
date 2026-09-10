@@ -1,11 +1,27 @@
 ---
-- name: Add kubectl PATH and KUBECONFIG via /etc/profile.d (applies to all shells, interactive and non-interactive)
-  copy:
-    dest: /etc/profile.d/rke2-kubectl.sh
-    content: |
-      export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
-      export PATH=$PATH:/var/lib/rancher/rke2/bin
-    mode: "0644"
-    owner: root
-    group: root
+- name: Remove old .bashrc-based kubectl env block
+  blockinfile:
+    path: /home/{{ ansible_user }}/.bashrc
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - rke2-kubectl-env"
+    state: absent
+
+- name: Remove profile.d approach (doesn't apply to non-login SSH commands)
+  file:
+    path: /etc/profile.d/rke2-kubectl.sh
+    state: absent
+  become: true
+
+- name: Add KUBECONFIG via /etc/environment (applies to all SSH sessions via PAM)
+  lineinfile:
+    path: /etc/environment
+    line: 'KUBECONFIG=/etc/rancher/rke2/rke2.yaml'
+    state: present
+  become: true
+
+- name: Add RKE2 bin directory to system-wide PATH via /etc/environment
+  lineinfile:
+    path: /etc/environment
+    regexp: '^PATH='
+    line: 'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/var/lib/rancher/rke2/bin"'
+    state: present
   become: true
