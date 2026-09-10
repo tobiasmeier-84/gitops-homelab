@@ -503,3 +503,101 @@ finding real bugs (as today's session did, repeatedly), but worth
 pacing deliberately during heavy debugging sessions, or testing
 against a node with more RAM headroom, to avoid tripping the same
 memory-exhaustion cascade again.
+
+## Addendum: real-world performance measured, root cause identified as external bandwidth, not infrastructure
+
+**Status:** Full pipeline confirmed working end-to-end on real, current data
+(~57GB source, ~50GB compressed). Total runtime is genuinely multi-hour, root
+cause fully understood and expected — not a defect.
+
+### The performance investigation, resolved
+
+Earlier testing showed the pipeline was slow with CPU, disk, and network all
+sitting mostly idle — genuinely puzzling at the time. Direct measurement
+resolved it precisely:
+
+1. **Snapshot creation → worker pod running**: ~22 minutes. This is Longhorn's
+   full-copy clone of the snapshot into a fresh single-replica restore volume
+   — a real, architectural I/O cost of the V1 data engine (confirmed via
+   `%idle: 91.72%` on disk during testing — genuinely I/O-wait-bound, not
+   CPU-bound).
+2. **Compression**: fast, `zstd -T4` (capped from `-T0` after the memory
+   incident below) compressed 57GB → 53GB in a few minutes — only ~7%
+   reduction, confirming the data is mostly already-compressed content
+   (photos/videos), not text.
+3. **Upload**: the real bottleneck. Directly measured live throughput via
+   `/sys/class/net/eth0/statistics/tx_bytes` during an actual upload:
+   **~62 Mbit/s sustained** — genuinely limited by the operator's own
+   internet connection (identified as the home powerline network segment),
+   not anything in the Kubernetes/Longhorn/backup-script stack. At this rate,
+   a single ~50GB upload takes ~115 minutes; the pipeline uploads to **two**
+   independent providers sequentially, giving a realistic total runtime of
+   several hours for the full run.
+
+**This is not a bug.** No infrastructure change can fix an external
+bandwidth ceiling. Worker timeout extended from 90 minutes to **8 hours**
+to comfortably accommodate this (and future data growth) without needing
+frequent revisiting; safe to shorten once the operator upgrades their
+network connection.
+
+### A real, separate production incident during testing: memory-pressure-triggered filesystem errors on `rhea`
+
+During an unusually high volume of same-day rapid test cycles, `rhea`
+reached apparent memory exhaustion (Proxmox reported 100%+; note this
+figure includes reclaimable page cache and can overstate real pressure —
+Linux's own `free -h` `available` column is the more reliable metric).
+This triggered real ext4 I/O errors on several dynamically-attached
+Longhorn test volumes and cascaded into a cluster-wide pod restart event.
+
+**Root cause confirmed, not assumed**: `zpool status -v` on all three
+physical Proxmox hosts showed every pool completely healthy throughout —
+the physical/virtual storage was never actually at risk. The
+underlying trigger was genuine memory pressure from `zstd -T0` (unbounded
+thread count, unbounded memory) combined with unusually heavy repeated
+Longhorn volume churn from testing.
+
+**Recovery**: clean reboot of `rhea`. Both affected application pods
+self-healed via Kubernetes' normal restart mechanism within minutes.
+Data integrity verified via direct `SELECT COUNT(*)` against the live
+PostgreSQL database before and after — identical row count throughout.
+
+**Real fixes applied**:
+- `zstd -T0` → `-T4`, bounding peak compression memory usage
+- RKE2 node memory increased 24GB → 32GB on all three nodes (applied
+  live via OpenTofu, no reboot required)
+
+**A genuine, secondary finding during recovery**: after the memory fix,
+the live Rocinante data volume briefly showed `robustness: degraded`.
+Investigation via `kubectl get engines.longhorn.io ... replicaModeMap`
+confirmed this was Longhorn correctly, automatically rebuilding one
+replica (mode `WO` — write-only, rebuilding) while the other two
+remained fully synced (`RW`) the entire time — genuine, working
+self-healing, not data loss risk. Resolved on its own within ~15
+minutes. Worth remembering: `kubectl get volumes.longhorn.io`'s
+top-level `ROBUSTNESS` column can lag noticeably behind the real,
+already-recovered state — check `replicaModeMap` directly for the
+authoritative, real-time picture during any future incident.
+
+### Also fixed during this investigation: missing cluster-level RBAC
+
+`kubectl exec` was failing cluster-wide (`kubectl logs` worked
+throughout, since it uses a different authorization path — `logs` is a
+GET-style proxy request, `exec` requires `create`, a genuinely different
+grant). Root cause: RKE2's own default `kube-apiserver-kubelet-admin`
+ClusterRoleBinding binds the `kube-apiserver` user identity, but this
+cluster's actual apiserver client certificate presents as `system:apiserver`
+— a real mismatch, cause unconfirmed (possibly an RKE2 version-history
+artifact). Fixed with an additive `system-apiserver-kubelet-admin`
+ClusterRoleBinding (`gitops/manifests/cluster-rbac/`), deliberately not
+modifying RKE2's own auto-reconciled default.
+
+### Future optimization worth investigating, not pursued today
+
+Longhorn's V2 data engine supports a `cloneMode: linked-clone` option
+that would avoid the full-copy restore step entirely (confirmed directly
+from Longhorn's own documentation) — but is scoped specifically to V2,
+a genuinely different, newer architecture than the V1 engine this
+cluster runs. Worth a dedicated investigation into V2's maturity/
+stability before considering migration; not attempted today given the
+real risk of migrating a production storage engine, and given the
+actual bottleneck (external bandwidth) wouldn't be improved by it anyway.
