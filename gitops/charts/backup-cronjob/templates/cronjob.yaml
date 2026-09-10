@@ -15,7 +15,7 @@ spec:
           restartPolicy: Never
           securityContext:
             runAsNonRoot: true
-            runAsUser: {{ .Values.workerRunAsUser }}
+            runAsUser: 1000
             seccompProfile:
               type: RuntimeDefault
           containers:
@@ -49,14 +49,18 @@ spec:
                   RUN_ID=$(date +%Y%m%d-%H%M%S)
                   SNAP_NAME="${APP_NAME}-backup-${RUN_ID}"
                   RESTORE_PVC="${APP_NAME}-restore-${RUN_ID}"
+                  SCRATCH_PVC="${APP_NAME}-scratch-${RUN_ID}"
                   WORKER_POD="${APP_NAME}-worker-${RUN_ID}"
+
                   cleanup() {
                     echo "Cleaning up..."
                     kubectl delete pod "$WORKER_POD" -n "$NAMESPACE" --ignore-not-found=true
                     kubectl delete pvc "$RESTORE_PVC" -n "$NAMESPACE" --ignore-not-found=true
+                    kubectl delete pvc "$SCRATCH_PVC" -n "$NAMESPACE" --ignore-not-found=true
                     kubectl delete volumesnapshot "$SNAP_NAME" -n "$NAMESPACE" --ignore-not-found=true
                   }
                   trap cleanup EXIT
+
                   echo "Creating snapshot $SNAP_NAME..."
                   kubectl apply -f - << EOF
                   apiVersion: snapshot.storage.k8s.io/v1
@@ -70,6 +74,7 @@ spec:
                       persistentVolumeClaimName: $PVC_NAME
                   EOF
                   kubectl wait --for=jsonpath='{.status.readyToUse}'=true "volumesnapshot/$SNAP_NAME" -n "$NAMESPACE" --timeout=1800s
+
                   echo "Restoring to PVC $RESTORE_PVC (single-replica, disposable)..."
                   kubectl apply -f - << EOF
                   apiVersion: v1
@@ -89,6 +94,23 @@ spec:
                       apiGroup: snapshot.storage.k8s.io
                   EOF
                   kubectl wait --for=jsonpath='{.status.phase}'=Bound "pvc/$RESTORE_PVC" -n "$NAMESPACE" --timeout=1800s
+
+                  echo "Creating scratch PVC $SCRATCH_PVC (compression scratch space, canterbury-backed)..."
+                  kubectl apply -f - << EOF
+                  apiVersion: v1
+                  kind: PersistentVolumeClaim
+                  metadata:
+                    name: $SCRATCH_PVC
+                    namespace: $NAMESPACE
+                  spec:
+                    accessModes: ["ReadWriteOnce"]
+                    storageClassName: longhorn-bulk-single-replica
+                    resources:
+                      requests:
+                        storage: 200Gi
+                  EOF
+                  kubectl wait --for=jsonpath='{.status.phase}'=Bound "pvc/$SCRATCH_PVC" -n "$NAMESPACE" --timeout=300s
+
                   echo "Starting worker pod $WORKER_POD..."
                   kubectl apply -f - << EOF
                   apiVersion: v1
@@ -107,7 +129,7 @@ spec:
                         type: RuntimeDefault
                     containers:
                       - name: worker
-                        image: alpine:3.20
+                        image: alpine/k8s:1.30.3
                         securityContext:
                           allowPrivilegeEscalation: false
                           capabilities:
@@ -127,6 +149,8 @@ spec:
                             readOnly: true
                           - name: script
                             mountPath: /scripts
+                          - name: scratch
+                            mountPath: /scratch
                     volumes:
                       - name: data
                         persistentVolumeClaim:
@@ -135,9 +159,13 @@ spec:
                         configMap:
                           name: backup-worker-script
                           defaultMode: 0755
+                      - name: scratch
+                        persistentVolumeClaim:
+                          claimName: $SCRATCH_PVC
                   EOF
-                  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$WORKER_POD -n "$NAMESPACE" --timeout=5400s
-                  echo "=== Worker logs ==="
-                  kubectl logs "$WORKER_POD" -n "$NAMESPACE" | tee /tmp/worker-output.log
 
-                  echo "Backup run $RUN_ID complete"
+                  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$WORKER_POD -n "$NAMESPACE" --timeout=5400s
+
+                  echo "=== Worker logs ==="
+                  kubectl logs "$WORKER_POD" -n "$NAMESPACE"
+                  echo "Backup run $RUN_ID complete (manifest recording disabled — only 2 backups exist per chain, trivially distinguished by timestamp)"

@@ -8,7 +8,7 @@ data:
     #!/bin/sh
     set -e
 
-    echo "Installing age, zstd, aws-cli, unzip into alternate root..."
+    echo "Installing age, zstd, aws-cli, unzip, curl, jq into alternate root..."
     mkdir -p /tmp/pkgroot
     apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age zstd aws-cli unzip curl jq || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
     export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
@@ -23,8 +23,8 @@ data:
     CURL_OPTS="-k"
     JQ="/tmp/pkgroot/usr/bin/jq"
 
-    ARCHIVE="/tmp/${APP_NAME}-${RUN_ID}.tar.zst"
-    echo "Compressing /data (single intermediate file, deleted after upload)..."
+    ARCHIVE="/scratch/${APP_NAME}-${RUN_ID}.tar.zst"
+    echo "Compressing /data to scratch volume..."
     tar -C /data -cf - . | "$ZSTD" -T0 -o "$ARCHIVE"
 
     echo "Generating Chain A keypair..."
@@ -49,7 +49,7 @@ data:
     "$AGE" -r "$CHAIN_B_PUBKEY" "$ARCHIVE" | "$AWS_PY" "$AWS" s3 cp - "s3://barbapiccola-chain-b-backup/${APP_NAME}-${RUN_ID}.age" \
       --endpoint-url https://s3.eu-central-003.backblazeb2.com
 
-    echo "Removing compressed archive (no longer needed)..."
+    echo "Removing compressed archive from scratch volume..."
     rm -f "$ARCHIVE"
 
     echo "Storing Chain A key in Azure Key Vault..."
