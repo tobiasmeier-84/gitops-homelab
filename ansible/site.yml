@@ -90,3 +90,8 @@
   hosts: rke2_nodes
   roles:
     - rke2-kubectl-env
+
+- name: Deploy lightweight resource monitoring on RKE2 nodes
+  hosts: rke2_nodes
+  roles:
+    - resource-watch

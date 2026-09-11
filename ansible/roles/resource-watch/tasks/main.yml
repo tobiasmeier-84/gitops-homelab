@@ -1,0 +1,52 @@
+---
+- name: Create resource-watch script
+  copy:
+    dest: /usr/local/bin/resource-watch.sh
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      while true; do
+        echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) ===" >> /var/log/resource-watch.log
+        free -h >> /var/log/resource-watch.log
+        ps aux --sort=-%mem | head -10 >> /var/log/resource-watch.log
+        echo "" >> /var/log/resource-watch.log
+        sleep 60
+      done
+  become: true
+
+- name: Create systemd service for resource-watch
+  copy:
+    dest: /etc/systemd/system/resource-watch.service
+    content: |
+      [Unit]
+      Description=Lightweight resource monitoring (memory/top processes every 60s)
+      After=network.target
+
+      [Service]
+      ExecStart=/usr/local/bin/resource-watch.sh
+      Restart=always
+
+      [Install]
+      WantedBy=multi-user.target
+  become: true
+
+- name: Set up log rotation for resource-watch.log
+  copy:
+    dest: /etc/logrotate.d/resource-watch
+    content: |
+      /var/log/resource-watch.log {
+        daily
+        rotate 7
+        compress
+        missingok
+        notifempty
+      }
+  become: true
+
+- name: Enable and start resource-watch service
+  systemd:
+    name: resource-watch
+    enabled: true
+    state: started
+    daemon_reload: true
+  become: true
