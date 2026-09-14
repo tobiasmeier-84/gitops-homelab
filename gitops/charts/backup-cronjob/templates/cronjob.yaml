@@ -39,11 +39,13 @@ spec:
                   value: "{{ .Values.storageClassName }}"
                 - name: WORKER_RUN_AS_USER
                   value: "{{ .Values.workerRunAsUser }}"
+                - name: NOTIFY_EMAIL
+                  value: "{{ .Values.notifyEmail }}"
               envFrom:
                 - secretRef:
                     name: backup-chain-credentials
                 - secretRef:
-                    name: rocinante-smtp-credentials
+                    name: backup-smtp-credentials
               volumeMounts:
                 - name: notify-script
                   mountPath: /scripts-notify

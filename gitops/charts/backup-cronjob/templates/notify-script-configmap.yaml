@@ -16,8 +16,8 @@ data:
     app_name = os.environ['APP_NAME']
 
     msg = MIMEMultipart()
-    msg['From'] = "nextcloud@solsys.dev"
-    msg['To'] = os.environ['smtp_username']
+    msg['From'] = "backup@solsys.dev"
+    msg['To'] = os.environ['NOTIFY_EMAIL']
     msg['Subject'] = f"{app_name} backup {status}: {run_id}"
     msg.attach(MIMEText(f"Backup run {run_id} for {app_name}: {status}.\n\nFull log attached (if available).", "plain"))
 
@@ -31,6 +31,6 @@ data:
 
     s = smtplib.SMTP_SSL("mail.cyon.ch", 465)
     s.login(os.environ['smtp_username'], os.environ['smtp_password'])
-    s.sendmail("nextcloud@solsys.dev", os.environ['smtp_username'], msg.as_string())
+    s.sendmail("backup@solsys.dev", os.environ['NOTIFY_EMAIL'], msg.as_string())
     s.quit()
     print("Notification sent.")

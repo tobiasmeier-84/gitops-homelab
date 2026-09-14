@@ -1,0 +1,15 @@
+---
+- name: Create backup SMTP credentials secret in rocinante namespace
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: backup-smtp-credentials
+        namespace: rocinante
+      type: Opaque
+      stringData:
+        smtp_username: "{{ lookup('env', 'BACKUP_SMTP_USERNAME') }}"
+        smtp_password: "{{ lookup('env', 'BACKUP_SMTP_PASSWORD') }}"
+  when: inventory_hostname == groups['rke2_nodes'][0]
