@@ -16,7 +16,7 @@ spec:
         pvcName: rocinante-nextcloud-nextcloud
         pvcSize: 150Gi
         storageClassName: longhorn-bulk
-        schedule: "0 3 * * 0"
+        schedule: "0 0 * * *"
         workerRunAsUser: 33
   destination:
     server: https://kubernetes.default.svc

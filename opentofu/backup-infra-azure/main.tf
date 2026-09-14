@@ -40,7 +40,7 @@ resource "azurerm_key_vault_access_policy" "backup_writer" {
   tenant_id    = var.tenant_id
   object_id    = azuread_service_principal.backup_writer.object_id
 
-  secret_permissions = ["Get", "Set", "List"]
+  secret_permissions = ["Get", "Set", "List", "Delete", "Purge"]
 }
 
 output "backup_writer_client_id" {
