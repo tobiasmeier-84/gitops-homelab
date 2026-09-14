@@ -163,6 +163,11 @@ spec:
                             mountPath: /scripts
                           - name: scratch
                             mountPath: /scratch
+                        resources:
+                          requests:
+                            memory: "2Gi"
+                          limits:
+                            memory: "4Gi"
                     volumes:
                       - name: data
                         persistentVolumeClaim:

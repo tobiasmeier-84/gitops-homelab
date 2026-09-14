@@ -7,8 +7,9 @@ data:
   backup-worker.sh: |
     #!/bin/sh
     set -e
+    set -o pipefail
 
-    echo "Installing age, zstd, aws-cli, unzip, curl, jq into alternate root..."
+    echo "Installing age, zstd, aws-cli, unzip into alternate root..."
     mkdir -p /tmp/pkgroot
     apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age zstd aws-cli unzip curl jq || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
     export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
@@ -26,6 +27,21 @@ data:
     ARCHIVE="/scratch/${APP_NAME}-${RUN_ID}.tar.zst"
     echo "Compressing /data to scratch volume..."
     tar -C /data -cf - . | "$ZSTD" -T4 -o "$ARCHIVE"
+
+    echo "Verifying compressed archive is genuinely substantial..."
+    ARCHIVE_SIZE=$(stat -c%s "$ARCHIVE" 2>/dev/null || wc -c < "$ARCHIVE")
+    MIN_EXPECTED_SIZE=1048576
+    echo "Archive size: ${ARCHIVE_SIZE} bytes"
+    if [ "$ARCHIVE_SIZE" -lt "$MIN_EXPECTED_SIZE" ]; then
+      echo "FATAL: compressed archive is only ${ARCHIVE_SIZE} bytes — expected at least ${MIN_EXPECTED_SIZE}. Compression likely failed or was killed mid-stream (check for OOMKill). Aborting before any upload."
+      exit 1
+    fi
+
+    echo "Verifying archive is a valid, complete zstd stream..."
+    if ! "$ZSTD" -t "$ARCHIVE"; then
+      echo "FATAL: archive failed zstd integrity check — corrupt or truncated. Aborting before any upload."
+      exit 1
+    fi
 
     echo "Generating Chain A keypair..."
     "$AGE_KEYGEN" -o /tmp/chain-a.key 2>/tmp/chain-a-pub.txt
