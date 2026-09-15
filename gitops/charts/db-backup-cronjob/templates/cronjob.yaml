@@ -75,7 +75,7 @@ spec:
 
                   export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
 
-                  PGDUMP="/tmp/pkgroot/usr/bin/pg_dump"
+                  PGDUMP="/tmp/pkgroot/usr/libexec/postgresql18/pg_dump"
                   AWS="/tmp/pkgroot/usr/bin/aws"
                   AWS_PY="/tmp/pkgroot/usr/bin/python3"
                   AGE="/tmp/pkgroot/usr/bin/age"
