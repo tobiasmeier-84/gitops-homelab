@@ -66,9 +66,13 @@ spec:
                   }
                   trap cleanup EXIT
 
-                  echo "Installing postgresql18-client, age, aws-cli, curl, unzip, jq..."
+                  echo "Installing age, aws-cli, curl, unzip, jq (stable repo)..."
                   mkdir -p /tmp/pkgroot
-                  apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted postgresql18-client age aws-cli curl unzip jq || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
+                  apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age aws-cli curl unzip jq || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
+
+                  echo "Installing postgresql18-client (from edge repo — not yet backported to stable, but pg_dump requires client_major >= server_major, and the DB server is genuinely v18)..."
+                  apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted --repository https://dl-cdn.alpinelinux.org/alpine/edge/main postgresql18-client || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
+
                   export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
 
                   PGDUMP="/tmp/pkgroot/usr/bin/pg_dump"
@@ -80,6 +84,13 @@ spec:
                   CURL_OPTS="-k"
                   JQ="/tmp/pkgroot/usr/bin/jq"
                   UNZIP="/tmp/pkgroot/usr/bin/unzip"
+
+                  echo "Verifying pg_dump was actually installed and is executable..."
+                  if [ ! -x "$PGDUMP" ]; then
+                    echo "FATAL: pg_dump not found at $PGDUMP after install. Aborting before any dump attempt."
+                    exit 1
+                  fi
+                  "$PGDUMP" --version
 
                   DUMP="/scratch/${APP_NAME}-${RUN_ID}.sql"
                   echo "Dumping database ${dbname} from ${DB_HOST}..."
