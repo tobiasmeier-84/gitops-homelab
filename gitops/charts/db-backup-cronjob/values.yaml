@@ -1,7 +1,7 @@
 appName: barbapiccola
 namespace: rocinante
 dbSecretName: barbapiccola-app
-dbHost: barbapiccola-ro.rocinante.svc.cluster.local
+dbHost: barbapiccola-rw.rocinante.svc.cluster.local
 dbPort: "5432"
 schedule: "0 2 * * *"
 notifyEmail: admin@solsys.dev
