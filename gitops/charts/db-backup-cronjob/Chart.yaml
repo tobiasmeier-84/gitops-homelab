@@ -1,0 +1,4 @@
+apiVersion: v2
+name: db-backup-cronjob
+description: Reusable dual-chain encrypted pg_dump backup CronJob for any CloudNativePG database
+version: 0.1.0

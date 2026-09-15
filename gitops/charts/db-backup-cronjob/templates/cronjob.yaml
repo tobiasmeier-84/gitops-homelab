@@ -1,0 +1,167 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Values.appName }}-db-backup
+  namespace: {{ .Values.namespace }}
+spec:
+  schedule: "{{ .Values.schedule }}"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: {{ .Values.workerRunAsUser }}
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: db-backup
+              image: alpine/k8s:1.30.3
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  memory: "512Mi"
+                limits:
+                  memory: "2Gi"
+              env:
+                - name: APP_NAME
+                  value: "{{ .Values.appName }}"
+                - name: DB_HOST
+                  value: "{{ .Values.dbHost }}"
+                - name: DB_PORT
+                  value: "{{ .Values.dbPort }}"
+                - name: NOTIFY_EMAIL
+                  value: "{{ .Values.notifyEmail }}"
+              envFrom:
+                - secretRef:
+                    name: backup-chain-credentials
+                - secretRef:
+                    name: backup-smtp-credentials
+                - secretRef:
+                    name: {{ .Values.dbSecretName }}
+              volumeMounts:
+                - name: notify-script
+                  mountPath: /scripts-notify
+                - name: scratch
+                  mountPath: /scratch
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  set -o pipefail
+                  RUN_ID=$(date +%Y%m%d-%H%M%S)
+                  STATUS="UNKNOWN"
+
+                  cleanup() {
+                    export STATUS RUN_ID APP_NAME
+                    python3 /scripts-notify/notify.py > /tmp/worker-output.log 2>&1 || cat /tmp/worker-output.log
+                  }
+                  trap cleanup EXIT
+
+                  echo "Installing postgresql18-client, age, aws-cli, curl, unzip, jq..."
+                  mkdir -p /tmp/pkgroot
+                  apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted postgresql18-client age aws-cli curl unzip jq || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
+                  export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
+
+                  PGDUMP="/tmp/pkgroot/usr/bin/pg_dump"
+                  AWS="/tmp/pkgroot/usr/bin/aws"
+                  AWS_PY="/tmp/pkgroot/usr/bin/python3"
+                  AGE="/tmp/pkgroot/usr/bin/age"
+                  AGE_KEYGEN="/tmp/pkgroot/usr/bin/age-keygen"
+                  CURL="/tmp/pkgroot/usr/bin/curl"
+                  CURL_OPTS="-k"
+                  JQ="/tmp/pkgroot/usr/bin/jq"
+                  UNZIP="/tmp/pkgroot/usr/bin/unzip"
+
+                  DUMP="/scratch/${APP_NAME}-${RUN_ID}.sql"
+                  echo "Dumping database ${dbname} from ${DB_HOST}..."
+                  export PGPASSWORD="$password"
+                  "$PGDUMP" -h "$DB_HOST" -p "$DB_PORT" -U "$username" -d "$dbname" -F c -f "$DUMP"
+
+                  echo "Verifying dump is genuinely substantial..."
+                  DUMP_SIZE=$(stat -c%s "$DUMP" 2>/dev/null || wc -c < "$DUMP")
+                  MIN_EXPECTED_SIZE=10240
+                  echo "Dump size: ${DUMP_SIZE} bytes"
+                  if [ "$DUMP_SIZE" -lt "$MIN_EXPECTED_SIZE" ]; then
+                    echo "FATAL: dump is only ${DUMP_SIZE} bytes — expected at least ${MIN_EXPECTED_SIZE}. Aborting before any upload."
+                    exit 1
+                  fi
+
+                  echo "=== Chain A: encrypt, upload, store key, prune ==="
+                  "$AGE_KEYGEN" -o /tmp/chain-a.key 2>/tmp/chain-a-pub.txt
+                  CHAIN_A_PUBKEY=$(grep "Public key:" /tmp/chain-a-pub.txt | awk '{print $NF}')
+                  CHAIN_A_PRIVKEY=$(cat /tmp/chain-a.key)
+
+                  export AWS_ACCESS_KEY_ID="$OVH_S3_ACCESS_KEY"
+                  export AWS_SECRET_ACCESS_KEY="$OVH_S3_SECRET_KEY"
+                  "$AGE" -r "$CHAIN_A_PUBKEY" "$DUMP" | "$AWS_PY" "$AWS" s3 cp - "s3://scopuli-chain-a-backup/${APP_NAME}-db-${RUN_ID}.age" \
+                    --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net
+
+                  AZ_TOKEN=$($CURL $CURL_OPTS -s -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
+                    -d "grant_type=client_credentials&client_id=${AZURE_CLIENT_ID}&client_secret=${AZURE_CLIENT_SECRET}&scope=https://vault.azure.net/.default" \
+                    | "$JQ" -r '.access_token')
+                  $CURL $CURL_OPTS -s -X PUT "https://kv-solsys-chainb.vault.azure.net/secrets/${APP_NAME}-db-${RUN_ID}?api-version=7.4" \
+                    -H "Authorization: Bearer $AZ_TOKEN" -H "Content-Type: application/json" \
+                    -d "{\"value\":\"$CHAIN_A_PRIVKEY\"}" -o /dev/null -w "Azure Key Vault store: HTTP %{http_code}\n"
+
+                  CHAIN_A_OLD=$("$AWS_PY" "$AWS" s3 ls "s3://scopuli-chain-a-backup/" --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net \
+                    | awk '{print $4}' | grep "^${APP_NAME}-db-" | sort -r | tail -n +3)
+                  for OLD_BLOB in $CHAIN_A_OLD; do
+                    OLD_RUN_ID=$(echo "$OLD_BLOB" | sed "s/^${APP_NAME}-db-//;s/\.age$//")
+                    echo "Deleting old Chain A DB blob: $OLD_BLOB"
+                    "$AWS_PY" "$AWS" s3 rm "s3://scopuli-chain-a-backup/${OLD_BLOB}" --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net
+                    AZ_TOKEN=$($CURL $CURL_OPTS -s -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
+                      -d "grant_type=client_credentials&client_id=${AZURE_CLIENT_ID}&client_secret=${AZURE_CLIENT_SECRET}&scope=https://vault.azure.net/.default" \
+                      | "$JQ" -r '.access_token')
+                    $CURL $CURL_OPTS -s -X DELETE "https://kv-solsys-chainb.vault.azure.net/secrets/${APP_NAME}-db-${OLD_RUN_ID}?api-version=7.4" \
+                      -H "Authorization: Bearer $AZ_TOKEN" -o /dev/null -w "  delete: HTTP %{http_code}\n"
+                    $CURL $CURL_OPTS -s -X DELETE "https://kv-solsys-chainb.vault.azure.net/deletedsecrets/${APP_NAME}-db-${OLD_RUN_ID}?api-version=7.4" \
+                      -H "Authorization: Bearer $AZ_TOKEN" -o /dev/null -w "  purge: HTTP %{http_code}\n"
+                  done
+
+                  echo "=== Chain B: encrypt, upload, store key, prune ==="
+                  "$AGE_KEYGEN" -o /tmp/chain-b.key 2>/tmp/chain-b-pub.txt
+                  CHAIN_B_PUBKEY=$(grep "Public key:" /tmp/chain-b-pub.txt | awk '{print $NF}')
+                  CHAIN_B_PRIVKEY=$(cat /tmp/chain-b.key)
+
+                  export AWS_ACCESS_KEY_ID="$B2_KEY_ID"
+                  export AWS_SECRET_ACCESS_KEY="$B2_KEY_SECRET"
+                  "$AGE" -r "$CHAIN_B_PUBKEY" "$DUMP" | "$AWS_PY" "$AWS" s3 cp - "s3://barbapiccola-chain-b-backup/${APP_NAME}-db-${RUN_ID}.age" \
+                    --endpoint-url https://s3.eu-central-003.backblazeb2.com
+
+                  $CURL $CURL_OPTS -sL https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-x86_64-unknown-linux-musl-2.1.0.zip -o /tmp/bws.zip
+                  "$UNZIP" -o /tmp/bws.zip -d /tmp
+                  export BWS_SERVER_URL="https://vault.bitwarden.eu"
+                  /tmp/bws secret create --access-token "$BW_ACCESS_TOKEN" "${APP_NAME}-db-${RUN_ID}" "$CHAIN_B_PRIVKEY" "$BW_PROJECT_ID" > /dev/null
+
+                  CHAIN_B_OLD=$("$AWS_PY" "$AWS" s3 ls "s3://barbapiccola-chain-b-backup/" --endpoint-url https://s3.eu-central-003.backblazeb2.com \
+                    | awk '{print $4}' | grep "^${APP_NAME}-db-" | sort -r | tail -n +3)
+                  for OLD_BLOB in $CHAIN_B_OLD; do
+                    OLD_RUN_ID=$(echo "$OLD_BLOB" | sed "s/^${APP_NAME}-db-//;s/\.age$//")
+                    echo "Deleting old Chain B DB blob: $OLD_BLOB"
+                    "$AWS_PY" "$AWS" s3 rm "s3://barbapiccola-chain-b-backup/${OLD_BLOB}" --endpoint-url https://s3.eu-central-003.backblazeb2.com
+                    OLD_SECRET_ID=$(/tmp/bws secret list "$BW_PROJECT_ID" --access-token "$BW_ACCESS_TOKEN" \
+                      | "$JQ" -r ".[] | select(.key==\"${APP_NAME}-db-${OLD_RUN_ID}\") | .id")
+                    if [ -n "$OLD_SECRET_ID" ]; then
+                      /tmp/bws secret delete "$OLD_SECRET_ID" --access-token "$BW_ACCESS_TOKEN" > /dev/null
+                    fi
+                  done
+
+                  rm -f "$DUMP"
+                  STATUS="SUCCEEDED"
+                  echo "Database backup run $RUN_ID complete."
+          volumes:
+            - name: notify-script
+              configMap:
+                name: db-backup-notify-script
+            - name: scratch
+              emptyDir:
+                sizeLimit: 5Gi
