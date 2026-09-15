@@ -64,7 +64,7 @@ spec:
 
                   cleanup() {
                     echo "Cleaning up..."
-                    kubectl logs "$WORKER_POD" -n "$NAMESPACE" > /tmp/worker-output.log 2>&1 || echo "(no worker log available)" > /tmp/worker-output.log
+                    kubectl logs "$WORKER_POD" -n "$NAMESPACE" --timestamps > /tmp/worker-output.log 2>&1 || echo "(no worker log available)" > /tmp/worker-output.log
                     kubectl delete pod "$WORKER_POD" -n "$NAMESPACE" --ignore-not-found=true
                     kubectl delete pvc "$RESTORE_PVC" -n "$NAMESPACE" --ignore-not-found=true
                     kubectl delete pvc "$SCRATCH_PVC" -n "$NAMESPACE" --ignore-not-found=true
