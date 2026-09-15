@@ -12,6 +12,8 @@ spec:
     helm:
       valueFiles:
         - values.yaml
+      values: |
+        schedule: "0 0 * * *"
   destination:
     server: https://kubernetes.default.svc
     namespace: rocinante
