@@ -60,9 +60,13 @@ spec:
                   RUN_ID=$(date +%Y%m%d-%H%M%S)
                   STATUS="UNKNOWN"
 
+                  mkfifo /tmp/logpipe
+                  ( while read -r line; do echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $line"; done < /tmp/logpipe | tee /tmp/worker-output.log ) &
+                  exec > /tmp/logpipe 2>&1
+
                   cleanup() {
                     export STATUS RUN_ID APP_NAME
-                    python3 /scripts-notify/notify.py > /tmp/worker-output.log 2>&1 || cat /tmp/worker-output.log
+                    python3 /scripts-notify/notify.py
                   }
                   trap cleanup EXIT
 
