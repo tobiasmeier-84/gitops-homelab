@@ -13,3 +13,10 @@ spec:
         hostPort: null
       websecure:
         hostPort: null
+    additionalArguments:
+      - "--entryPoints.websecure.transport.respondingTimeouts.readTimeout=3600s"
+      - "--entryPoints.websecure.transport.respondingTimeouts.writeTimeout=3600s"
+      - "--entryPoints.websecure.transport.respondingTimeouts.idleTimeout=3600s"
+      - "--entryPoints.web.transport.respondingTimeouts.readTimeout=3600s"
+      - "--entryPoints.web.transport.respondingTimeouts.writeTimeout=3600s"
+      - "--entryPoints.web.transport.respondingTimeouts.idleTimeout=3600s"
