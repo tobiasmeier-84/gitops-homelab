@@ -38,9 +38,10 @@ resource "ovh_cloud_project_user_s3_policy" "backup_writer" {
         "s3:ListBucket",
         "s3:ListMultipartUploadParts",
         "s3:ListBucketMultipartUploads",
+        "s3:GetBucketVersioning",
         "s3:AbortMultipartUpload",
         "s3:GetBucketLocation",
-      ]
+      ]      
       Resource = [
         "arn:aws:s3:::scopuli-chain-a-backup",
         "arn:aws:s3:::scopuli-chain-a-backup/*",

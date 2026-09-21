@@ -161,8 +161,24 @@ spec:
                     | awk '{print $4}' | grep "^${APP_NAME}-db-" | sort -r | tail -n +3)
                   for OLD_BLOB in $CHAIN_B_OLD; do
                     OLD_RUN_ID=$(echo "$OLD_BLOB" | sed "s/^${APP_NAME}-db-//;s/\.age$//")
-                    echo "Deleting old Chain B DB blob: $OLD_BLOB"
-                    "$AWS_PY" "$AWS" s3 rm "s3://barbapiccola-chain-b-backup/${OLD_BLOB}" --endpoint-url https://s3.eu-central-003.backblazeb2.com
+                    echo "Deleting old Chain B DB blob (all versions + markers): $OLD_BLOB"
+
+                    "$AWS_PY" "$AWS" s3api list-object-versions --bucket barbapiccola-chain-b-backup --prefix "$OLD_BLOB" \
+                      --endpoint-url https://s3.eu-central-003.backblazeb2.com \
+                      --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json > /tmp/del-versions.json
+                    if [ "$("$JQ" '.Objects | length' /tmp/del-versions.json)" -gt 0 ]; then
+                      "$AWS_PY" "$AWS" s3api delete-objects --bucket barbapiccola-chain-b-backup \
+                        --endpoint-url https://s3.eu-central-003.backblazeb2.com --delete file:///tmp/del-versions.json
+                    fi
+
+                    "$AWS_PY" "$AWS" s3api list-object-versions --bucket barbapiccola-chain-b-backup --prefix "$OLD_BLOB" \
+                      --endpoint-url https://s3.eu-central-003.backblazeb2.com \
+                      --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' --output json > /tmp/del-markers.json
+                    if [ "$("$JQ" '.Objects | length' /tmp/del-markers.json)" -gt 0 ]; then
+                      "$AWS_PY" "$AWS" s3api delete-objects --bucket barbapiccola-chain-b-backup \
+                        --endpoint-url https://s3.eu-central-003.backblazeb2.com --delete file:///tmp/del-markers.json
+                    fi
+
                     OLD_SECRET_ID=$(/tmp/bws secret list "$BW_PROJECT_ID" --access-token "$BW_ACCESS_TOKEN" \
                       | "$JQ" -r ".[] | select(.key==\"${APP_NAME}-db-${OLD_RUN_ID}\") | .id")
                     if [ -n "$OLD_SECRET_ID" ]; then

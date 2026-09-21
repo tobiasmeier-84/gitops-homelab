@@ -43,20 +43,16 @@ data:
       exit 1
     fi
 
-    echo "=== Chain A: encrypt, upload, store key, prune (fully independent of Chain B) ==="
-
-    echo "Generating Chain A keypair..."
+    echo "=== Chain A: encrypt, upload, store key, prune ==="
     "$AGE_KEYGEN" -o /tmp/chain-a.key 2>/tmp/chain-a-pub.txt
     CHAIN_A_PUBKEY=$(grep "Public key:" /tmp/chain-a-pub.txt | awk '{print $NF}')
     CHAIN_A_PRIVKEY=$(cat /tmp/chain-a.key)
 
-    echo "Encrypting and uploading Chain A blob to OVHcloud (streamed, no intermediate file)..."
     export AWS_ACCESS_KEY_ID="$OVH_S3_ACCESS_KEY"
     export AWS_SECRET_ACCESS_KEY="$OVH_S3_SECRET_KEY"
     "$AGE" -r "$CHAIN_A_PUBKEY" "$ARCHIVE" | "$AWS_PY" "$AWS" s3 cp - "s3://scopuli-chain-a-backup/${APP_NAME}-${RUN_ID}.age" \
       --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net
 
-    echo "Storing Chain A key in Azure Key Vault..."
     AZ_TOKEN=$($CURL $CURL_OPTS -s -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
       -d "grant_type=client_credentials&client_id=${AZURE_CLIENT_ID}&client_secret=${AZURE_CLIENT_SECRET}&scope=https://vault.azure.net/.default" \
       | "$JQ" -r '.access_token')
@@ -64,7 +60,7 @@ data:
       -H "Authorization: Bearer $AZ_TOKEN" -H "Content-Type: application/json" \
       -d "{\"value\":\"$CHAIN_A_PRIVKEY\"}" -o /dev/null -w "Azure Key Vault store: HTTP %{http_code}\n"
 
-    echo "Pruning Chain A (OVHcloud, keeping 2 most recent)..."
+    echo "Pruning Chain A (OVHcloud, keeping 2 most recent — no versioning on this bucket, plain delete is permanent)..."
     CHAIN_A_OLD=$("$AWS_PY" "$AWS" s3 ls "s3://scopuli-chain-a-backup/" --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net \
       | awk '{print $4}' | grep "^${APP_NAME}-" | sort -r | tail -n +3)
     for OLD_BLOB in $CHAIN_A_OLD; do
@@ -81,36 +77,44 @@ data:
         -H "Authorization: Bearer $AZ_TOKEN" -o /dev/null -w "  purge: HTTP %{http_code}\n"
     done
 
-    echo "Chain A fully complete (data + key + pruning)."
-
-    echo "=== Chain B: encrypt, upload, store key, prune (fully independent of Chain A) ==="
-
-    echo "Generating Chain B keypair..."
+    echo "=== Chain B: encrypt, upload, store key, prune ==="
     "$AGE_KEYGEN" -o /tmp/chain-b.key 2>/tmp/chain-b-pub.txt
     CHAIN_B_PUBKEY=$(grep "Public key:" /tmp/chain-b-pub.txt | awk '{print $NF}')
     CHAIN_B_PRIVKEY=$(cat /tmp/chain-b.key)
 
-    echo "Encrypting and uploading Chain B blob to Backblaze (streamed, no intermediate file)..."
     export AWS_ACCESS_KEY_ID="$B2_KEY_ID"
     export AWS_SECRET_ACCESS_KEY="$B2_KEY_SECRET"
     "$AGE" -r "$CHAIN_B_PUBKEY" "$ARCHIVE" | "$AWS_PY" "$AWS" s3 cp - "s3://barbapiccola-chain-b-backup/${APP_NAME}-${RUN_ID}.age" \
       --endpoint-url https://s3.eu-central-003.backblazeb2.com
 
-    echo "Storing Chain B key in Bitwarden Secrets Manager..."
     $CURL $CURL_OPTS -sL https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-x86_64-unknown-linux-musl-2.1.0.zip -o /tmp/bws.zip
     "$UNZIP" -o /tmp/bws.zip -d /tmp
     export BWS_SERVER_URL="https://vault.bitwarden.eu"
     /tmp/bws secret create --access-token "$BW_ACCESS_TOKEN" "${APP_NAME}-${RUN_ID}" "$CHAIN_B_PRIVKEY" "$BW_PROJECT_ID" > /dev/null
-    echo "Bitwarden secret stored successfully"
 
-    echo "Pruning Chain B (Backblaze, keeping 2 most recent)..."
+    echo "Pruning Chain B (Backblaze, keeping 2 most recent — this bucket has versioning enabled, must delete ALL versions + delete markers explicitly or storage silently accumulates)..."
     CHAIN_B_OLD=$("$AWS_PY" "$AWS" s3 ls "s3://barbapiccola-chain-b-backup/" --endpoint-url https://s3.eu-central-003.backblazeb2.com \
       | awk '{print $4}' | grep "^${APP_NAME}-" | sort -r | tail -n +3)
     for OLD_BLOB in $CHAIN_B_OLD; do
       OLD_RUN_ID=$(echo "$OLD_BLOB" | sed "s/^${APP_NAME}-//;s/\.age$//")
-      echo "Deleting old Chain B blob: $OLD_BLOB (run_id: $OLD_RUN_ID)"
-      "$AWS_PY" "$AWS" s3 rm "s3://barbapiccola-chain-b-backup/${OLD_BLOB}" --endpoint-url https://s3.eu-central-003.backblazeb2.com
-      echo "Deleting corresponding Bitwarden secret: ${APP_NAME}-${OLD_RUN_ID}"
+      echo "Deleting old Chain B blob (all versions + markers): $OLD_BLOB"
+
+      "$AWS_PY" "$AWS" s3api list-object-versions --bucket barbapiccola-chain-b-backup --prefix "$OLD_BLOB" \
+        --endpoint-url https://s3.eu-central-003.backblazeb2.com \
+        --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json > /tmp/del-versions.json
+      if [ "$("$JQ" '.Objects | length' /tmp/del-versions.json)" -gt 0 ]; then
+        "$AWS_PY" "$AWS" s3api delete-objects --bucket barbapiccola-chain-b-backup \
+          --endpoint-url https://s3.eu-central-003.backblazeb2.com --delete file:///tmp/del-versions.json
+      fi
+
+      "$AWS_PY" "$AWS" s3api list-object-versions --bucket barbapiccola-chain-b-backup --prefix "$OLD_BLOB" \
+        --endpoint-url https://s3.eu-central-003.backblazeb2.com \
+        --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' --output json > /tmp/del-markers.json
+      if [ "$("$JQ" '.Objects | length' /tmp/del-markers.json)" -gt 0 ]; then
+        "$AWS_PY" "$AWS" s3api delete-objects --bucket barbapiccola-chain-b-backup \
+          --endpoint-url https://s3.eu-central-003.backblazeb2.com --delete file:///tmp/del-markers.json
+      fi
+
       OLD_SECRET_ID=$(/tmp/bws secret list "$BW_PROJECT_ID" --access-token "$BW_ACCESS_TOKEN" \
         | "$JQ" -r ".[] | select(.key==\"${APP_NAME}-${OLD_RUN_ID}\") | .id")
       if [ -n "$OLD_SECRET_ID" ]; then
@@ -121,5 +125,5 @@ data:
       fi
     done
 
-    echo "Chain B fully complete (data + key + pruning)."
+    rm -f "$ARCHIVE"
     echo "Backup run $RUN_ID complete."
