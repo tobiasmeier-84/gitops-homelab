@@ -50,10 +50,11 @@ spec:
                 - rocinante.gate.solsys.dev
                 - nextcloud.app.solsys.dev
 
+        image:
+          tag: "34.0.4-apache"
+
         nextcloud:
           host: rocinante.gate.solsys.dev
-          image:
-            tag: "34.0.4-apache"
           extraEnv:
             - name: OVERWRITEPROTOCOL
               value: "https"
