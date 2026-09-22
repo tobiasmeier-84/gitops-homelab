@@ -57,6 +57,12 @@ spec:
               # Low-usage maintenance window (01:00 UTC)
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set maintenance_window_start --value=1"
 
+              # Privacy hardening: this is a personal instance, disable public-facing
+              # discovery/sharing features not needed here
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ app:disable lookup_server_connector" || true
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ app:disable federation" || true
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ app:disable federatedfilesharing" || true
+
               # Safe, idempotent one-time repairs
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ maintenance:repair --include-expensive"
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ db:add-missing-indices"
