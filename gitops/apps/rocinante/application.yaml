@@ -53,6 +53,10 @@ spec:
         image:
           tag: "34.0.4-apache"
 
+        cronjob:
+          enabled: true
+          type: cronjob
+
         nextcloud:
           host: rocinante.gate.solsys.dev
           extraEnv:

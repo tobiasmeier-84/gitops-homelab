@@ -57,6 +57,8 @@ spec:
               # Low-usage maintenance window (01:00 UTC)
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set maintenance_window_start --value=1"
 
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ background:cron"
+
               # Privacy hardening: this is a personal instance, disable federated
               # sharing and public lookup-server registration.
               # Note: cloud_federation_api, federatedfilesharing, and
