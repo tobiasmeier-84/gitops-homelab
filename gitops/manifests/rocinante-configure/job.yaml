@@ -57,11 +57,18 @@ spec:
               # Low-usage maintenance window (01:00 UTC)
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set maintenance_window_start --value=1"
 
-              # Privacy hardening: this is a personal instance, disable public-facing
-              # discovery/sharing features not needed here
-              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ app:disable lookup_server_connector" || true
+              # Privacy hardening: this is a personal instance, disable federated
+              # sharing and public lookup-server registration.
+              # Note: cloud_federation_api, federatedfilesharing, and
+              # lookup_server_connector cannot be disabled via `occ app:disable` —
+              # this is a confirmed, current upstream Nextcloud limitation
+              # (see https://github.com/nextcloud/server/issues/49360), not a bug
+              # in our config. `federation` itself CAN be disabled and is below;
+              # for the other three, we disable their actual functionality instead.
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ app:disable federation" || true
-              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ app:disable federatedfilesharing" || true
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:app:set files_sharing outgoing_server2server_share_enabled --value=no"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:app:set files_sharing incoming_server2server_share_enabled --value=no"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set lookup_server --value=''"
 
               # Safe, idempotent one-time repairs
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ maintenance:repair --include-expensive"
