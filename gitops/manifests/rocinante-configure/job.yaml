@@ -80,6 +80,9 @@ spec:
               # Auto-redirect the login page to Entra ID SSO for normal use.
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:app:set --value=0 user_oidc allow_multiple_user_backends"
 
+              # Disable anonymous usage telemetry to Nextcloud GmbH
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ app:disable survey_client" || true
+
               # Safe, idempotent one-time repairs
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ maintenance:repair --include-expensive"
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ db:add-missing-indices"
