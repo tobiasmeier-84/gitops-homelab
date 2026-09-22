@@ -70,6 +70,11 @@ spec:
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:app:set files_sharing incoming_server2server_share_enabled --value=no"
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:system:set lookup_server --value=''"
 
+              # Randomize the local admin account's password — this account predates
+              # SSO and likely still has a known/weak local password. Since all real
+              # logins now go through Entra ID, nobody needs to know this value.
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "openssl rand -base64 32 | php occ user:resetpassword admin"
+
               # Safe, idempotent one-time repairs
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ maintenance:repair --include-expensive"
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ db:add-missing-indices"
