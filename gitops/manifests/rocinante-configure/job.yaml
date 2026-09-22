@@ -75,7 +75,7 @@ spec:
               # remains reachable via ?direct=1 as a deliberate break-glass path:
               # if genuinely needed, manually run `occ user:resetpassword admin`
               # at that moment; the next automated sync will re-randomize it again.
-              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "openssl rand -base64 32 | php occ user:resetpassword admin"
+              kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "OC_PASS=\$(openssl rand -base64 32) php occ user:resetpassword --password-from-env admin"
 
               # Auto-redirect the login page to Entra ID SSO for normal use.
               kubectl exec -n rocinante $POD -- su -s /bin/sh www-data -c "php occ config:app:set --value=0 user_oidc allow_multiple_user_backends"
