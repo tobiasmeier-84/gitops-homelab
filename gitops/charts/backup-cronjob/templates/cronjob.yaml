@@ -108,7 +108,7 @@ spec:
                   EOF
                   kubectl wait --for=jsonpath='{.status.phase}'=Bound "pvc/$RESTORE_PVC" -n "$NAMESPACE" --timeout=1800s
 
-                  echo "Creating scratch PVC $SCRATCH_PVC (compression scratch space, canterbury-backed)..."
+                  echo "Creating scratch PVC $SCRATCH_PVC (compression scratch space, dedicated scratch-usb disk — isolated from canterbury, see ADR-0005 addendum)..."
                   kubectl apply -f - << EOF
                   apiVersion: v1
                   kind: PersistentVolumeClaim
@@ -117,7 +117,7 @@ spec:
                     namespace: $NAMESPACE
                   spec:
                     accessModes: ["ReadWriteOnce"]
-                    storageClassName: longhorn-bulk-single-replica
+                    storageClassName: longhorn-scratch-usb
                     resources:
                       requests:
                         storage: 200Gi
