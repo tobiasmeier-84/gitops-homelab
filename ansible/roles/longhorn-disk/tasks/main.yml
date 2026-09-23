@@ -40,6 +40,12 @@
     longhorn_scratch_usb_device: "{{ scratch_usb_device_result.stdout | trim }}"
   when: inventory_hostname == "rhea"
 
+- name: Format scratch-usb disk with ext4 (rhea only)
+  filesystem:
+    fstype: ext4
+    dev: "{{ longhorn_scratch_usb_device }}"
+  when: inventory_hostname == "rhea"
+
 - name: Get UUID of scratch-usb device
   command: "blkid -s UUID -o value {{ longhorn_scratch_usb_device }}"
   register: scratch_usb_uuid_result
@@ -49,12 +55,6 @@
 - name: Set scratch-usb UUID fact
   set_fact:
     longhorn_scratch_usb_uuid: "{{ scratch_usb_uuid_result.stdout | trim }}"
-  when: inventory_hostname == "rhea"
-
-- name: Format scratch-usb disk with ext4 (rhea only)
-  filesystem:
-    fstype: ext4
-    dev: "{{ longhorn_scratch_usb_device }}"
   when: inventory_hostname == "rhea"
 
 - name: Create mount point for scratch-usb
