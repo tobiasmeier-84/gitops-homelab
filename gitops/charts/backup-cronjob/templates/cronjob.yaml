@@ -135,6 +135,14 @@ spec:
                       app: backup-worker
                   spec:
                     restartPolicy: Never
+                    # Pinned to rhea: the scratch-usb disk (and its dedicated
+                    # Longhorn StorageClass) only physically exists on this
+                    # node. Without this, Kubernetes could schedule the
+                    # worker elsewhere, and Longhorn would transparently
+                    # reach the volume over the network anyway — silently
+                    # defeating the whole point of a dedicated local disk.
+                    nodeSelector:
+                      kubernetes.io/hostname: rhea
                     securityContext:
                       runAsNonRoot: true
                       runAsUser: $WORKER_RUN_AS_USER
