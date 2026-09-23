@@ -136,7 +136,7 @@
 # ---- Tell Longhorn about both disks, tagged by tier, instead of relying
 # on its own single-default-disk auto-detection ----
 
-- name: Label node for custom Longhorn disk config
+- name: Register canterbury and tachi disks with Longhorn (bootstrap annotation — applies once, at initial node setup)
   kubernetes.core.k8s:
     kubeconfig: /etc/rancher/rke2/rke2.yaml
     kind: Node
@@ -149,6 +149,28 @@
           node.longhorn.io/default-disks-config: |
             [
               {"path":"/mnt/longhorn/canterbury","allowScheduling":true,"tags":["bulk"]},
-              {"path":"/mnt/longhorn/tachi","allowScheduling":true,"tags":["fast"]}{% if inventory_hostname == "rhea" %},
-              {"path":"/mnt/longhorn/scratch-usb","allowScheduling":true,"tags":["scratch"]}{% endif %}
+              {"path":"/mnt/longhorn/tachi","allowScheduling":true,"tags":["fast"]}
             ]
+
+# The annotation-based mechanism above only fires once, at a node's initial
+# Longhorn bootstrap — it does NOT re-sync on later edits (confirmed:
+# adding scratch-usb here and restarting longhorn-manager had no effect).
+# Adding a disk to an already-provisioned node requires patching the live
+# Longhorn Node CR directly instead.
+- name: Register scratch-usb disk with Longhorn directly (rhea only — Node CR patch, not the one-time bootstrap annotation)
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    kind: Node
+    api_version: longhorn.io/v1beta2
+    name: rhea
+    namespace: longhorn-system
+    state: patched
+    definition:
+      spec:
+        disks:
+          scratch-usb:
+            path: /mnt/longhorn/scratch-usb
+            allowScheduling: true
+            tags:
+              - scratch
+  when: inventory_hostname == "rhea"
