@@ -29,3 +29,8 @@ variable "sata_disk_ids" {
   description = "Per-node list of the 3 remaining SATA SSD identifiers for the 'canterbury' pool (striped, non-redundant — Longhorn provides cross-node redundancy). Same format caveat as razorback_disk_id."
   type        = map(list(string))
 }
+
+variable "scratch_usb_disk_id" {
+  description = "Single-node (pallas only) disk identifier for the 'scratch-usb' pool — a repurposed external USB 3.0 drive, dedicated backup-pipeline scratch space, isolated from canterbury/tachi. See main.tf for the real incident that motivated this."
+  type        = string
+}

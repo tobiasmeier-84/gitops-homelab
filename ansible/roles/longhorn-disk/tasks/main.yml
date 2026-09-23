@@ -28,6 +28,50 @@
   register: tachi_device_result
   changed_when: false
 
+- name: Identify scratch-usb device (rhea only, ~7TB dedicated backup scratch disk)
+  shell: |
+    echo "{{ lsblk_output.stdout }}" | awk '$2 > 6900000000000 && $2 < 7100000000000 {print "/dev/"$1}'
+  register: scratch_usb_device_result
+  changed_when: false
+  when: inventory_hostname == "rhea"
+
+- name: Set scratch-usb device fact
+  set_fact:
+    longhorn_scratch_usb_device: "{{ scratch_usb_device_result.stdout | trim }}"
+  when: inventory_hostname == "rhea"
+
+- name: Get UUID of scratch-usb device
+  command: "blkid -s UUID -o value {{ longhorn_scratch_usb_device }}"
+  register: scratch_usb_uuid_result
+  changed_when: false
+  when: inventory_hostname == "rhea"
+
+- name: Set scratch-usb UUID fact
+  set_fact:
+    longhorn_scratch_usb_uuid: "{{ scratch_usb_uuid_result.stdout | trim }}"
+  when: inventory_hostname == "rhea"
+
+- name: Format scratch-usb disk with ext4 (rhea only)
+  filesystem:
+    fstype: ext4
+    dev: "{{ longhorn_scratch_usb_device }}"
+  when: inventory_hostname == "rhea"
+
+- name: Create mount point for scratch-usb
+  file:
+    path: /mnt/longhorn/scratch-usb
+    state: directory
+    mode: '0755'
+  when: inventory_hostname == "rhea"
+
+- name: Mount scratch-usb disk persistently (by UUID, immune to device letter reshuffling)
+  mount:
+    path: /mnt/longhorn/scratch-usb
+    src: "UUID={{ longhorn_scratch_usb_uuid }}"
+    fstype: ext4
+    state: mounted
+  when: inventory_hostname == "rhea"
+
 - name: Set device facts
   set_fact:
     longhorn_canterbury_device: "{{ canterbury_device_result.stdout | trim }}"
@@ -105,5 +149,6 @@
           node.longhorn.io/default-disks-config: |
             [
               {"path":"/mnt/longhorn/canterbury","allowScheduling":true,"tags":["bulk"]},
-              {"path":"/mnt/longhorn/tachi","allowScheduling":true,"tags":["fast"]}
+              {"path":"/mnt/longhorn/tachi","allowScheduling":true,"tags":["fast"]}{% if inventory_hostname == "rhea" %},
+              {"path":"/mnt/longhorn/scratch-usb","allowScheduling":true,"tags":["scratch"]}{% endif %}
             ]

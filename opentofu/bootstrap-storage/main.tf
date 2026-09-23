@@ -129,6 +129,46 @@ resource "null_resource" "canterbury_autoexpand" {
 }
 
 # ============================================================================
+# SCRATCH-USB: dedicated single-disk pool on pallas only, for the backup
+# pipeline's scratch space. Physically an old external USB 3.0 drive
+# (14.6TB, repurposed). Deliberately isolated from canterbury/tachi to
+# decouple backup I/O from the pool serving live production data — see
+# ADR-0005 addendum, real incident on 2026-09-23 where sustained backup
+# read I/O correlated with a live Longhorn volume going degraded.
+#
+# Single-node only (pallas), unlike razorback/tachi/canterbury which exist
+# identically on all three nodes — this disk is physically attached to
+# just one host.
+# ============================================================================
+resource "null_resource" "scratch_usb_zpool" {
+  triggers = {
+    disk = var.scratch_usb_disk_id
+  }
+
+  connection {
+    type  = "ssh"
+    host  = "pallas.belt.solsys.dev"
+    user  = "root"
+    agent = true
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "zpool list -H -o name | grep -qx scratch-usb || zpool create scratch-usb /dev/${var.scratch_usb_disk_id}"
+    ]
+  }
+}
+
+resource "proxmox_storage_zfspool" "scratch_usb" {
+  id       = "scratch-usb"
+  nodes    = ["pallas"]
+  zfs_pool = "scratch-usb"
+  content  = ["images"]
+
+  depends_on = [null_resource.scratch_usb_zpool]
+}
+
+# ============================================================================
 # Caps ZFS ARC (Adaptive Replacement Cache) at 8GB per node. Uncapped, ARC
 # can grow to 50% of host RAM by default — left unchecked, this would eat
 # into the RAM budget allocated for VMs (RKE2 nodes at 24GB, titan, and

@@ -20,3 +20,5 @@ sata_disk_ids = {
   eros   = ["sdc", "sdd", "sde"]
   pallas = ["sdc", "sdd", "sde"]
 }
+
+scratch_usb_disk_id = "disk/by-id/usb-BUSLINK_Ciphershield_1208010000F04000026-0:0"

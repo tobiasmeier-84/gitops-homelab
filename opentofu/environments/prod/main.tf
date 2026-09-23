@@ -123,6 +123,7 @@ module "rhea" {
     { datastore_id = "razorback", size = 300, interface = "scsi0" },
     { datastore_id = "canterbury", size = 900, interface = "scsi1" },
     { datastore_id = "tachi", size = 100, interface = "scsi2" },
+    { datastore_id = "scratch-usb", size = 7000, interface = "scsi3" }, # Backup pipeline scratch, isolated from canterbury
   ]
 
   network_interfaces = [
