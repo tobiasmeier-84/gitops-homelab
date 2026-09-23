@@ -30,7 +30,7 @@
 
 - name: Identify scratch-usb device (rhea only, ~7TB dedicated backup scratch disk)
   shell: |
-    echo "{{ lsblk_output.stdout }}" | awk '$2 > 6900000000000 && $2 < 7100000000000 {print "/dev/"$1}'
+    echo "{{ lsblk_output.stdout }}" | awk '$2 > 6000000000000 && $2 < 8000000000000 {print "/dev/"$1}'
   register: scratch_usb_device_result
   changed_when: false
   when: inventory_hostname == "rhea"
