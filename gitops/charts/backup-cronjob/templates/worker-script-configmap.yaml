@@ -24,9 +24,12 @@ data:
     CURL_OPTS="-k"
     JQ="/tmp/pkgroot/usr/bin/jq"
 
-    ARCHIVE="/scratch/${APP_NAME}-${RUN_ID}.tar.zst"
-    echo "Compressing /data to scratch volume..."
-    tar -C /data -cf - . | "$ZSTD" -T4 -o "$ARCHIVE"
+    #ARCHIVE="/scratch/${APP_NAME}-${RUN_ID}.tar.zst"
+    ARCHIVE="/scratch/${APP_NAME}-${RUN_ID}.tar"
+    #echo "Compressing /data to scratch volume..."
+    echo "Copy /data to scratch volume..."
+    # tar -C /data -cf - . | "$ZSTD" -T4 -o "$ARCHIVE"
+    tar -C /data -cf "$ARCHIVE" .
 
     echo "Verifying compressed archive is genuinely substantial..."
     ARCHIVE_SIZE=$(stat -c%s "$ARCHIVE" 2>/dev/null || wc -c < "$ARCHIVE")
@@ -37,9 +40,14 @@ data:
       exit 1
     fi
 
-    echo "Verifying archive is a valid, complete zstd stream..."
-    if ! "$ZSTD" -t "$ARCHIVE"; then
-      echo "FATAL: archive failed zstd integrity check — corrupt or truncated. Aborting before any upload."
+    # echo "Verifying archive is a valid, complete zstd stream..."
+    # if ! "$ZSTD" -t "$ARCHIVE"; then
+    #   echo "FATAL: archive failed zstd integrity check — corrupt or truncated. Aborting before any upload."
+    #   exit 1
+    # fi
+    echo "Verifying archive is a valid, complete tar stream..."
+    if ! tar -tf "$ARCHIVE" > /dev/null; then
+      echo "FATAL: archive failed tar integrity check — corrupt or truncated. Aborting before any upload."
       exit 1
     fi
 
