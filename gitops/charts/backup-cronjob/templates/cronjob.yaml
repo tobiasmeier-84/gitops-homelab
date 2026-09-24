@@ -57,14 +57,15 @@ spec:
                   RUN_ID=$(date +%Y%m%d-%H%M%S)
                   SNAP_NAME="${APP_NAME}-backup-${RUN_ID}"
                   RESTORE_PVC="${APP_NAME}-restore-${RUN_ID}"
+                  COPY_POD="${APP_NAME}-copy-${RUN_ID}"
                   WORKER_POD="${APP_NAME}-worker-${RUN_ID}"
                   STATUS="UNKNOWN"
                   export RUN_ID APP_NAME
 
                   cleanup() {
                     echo "Cleaning up..."
-                    kubectl logs "$WORKER_POD" -n "$NAMESPACE" --timestamps > /tmp/worker-output.log 2>&1 || echo "(no worker log available)" > /tmp/worker-output.log
-                    kubectl delete pod "$WORKER_POD" -n "$NAMESPACE" --ignore-not-found=true
+                    kubectl logs "$WORKER_POD" -n "$NAMESPACE" --timestamps > /tmp/worker-output.log 2>&1 || kubectl logs "$COPY_POD" -n "$NAMESPACE" --timestamps > /tmp/worker-output.log 2>&1 || echo "(no worker log available)" > /tmp/worker-output.log
+                    kubectl delete pod "$WORKER_POD" "$COPY_POD" -n "$NAMESPACE" --ignore-not-found=true
                     kubectl delete pvc "$RESTORE_PVC" -n "$NAMESPACE" --ignore-not-found=true
                     kubectl delete volumesnapshot "$SNAP_NAME" -n "$NAMESPACE" --ignore-not-found=true
                     export STATUS
@@ -86,7 +87,7 @@ spec:
                   EOF
                   kubectl wait --for=jsonpath='{.status.readyToUse}'=true "volumesnapshot/$SNAP_NAME" -n "$NAMESPACE" --timeout=1800s
 
-                  echo "Creating restore PVC $RESTORE_PVC (WaitForFirstConsumer + dataLocality=strict-local — binding deferred until the worker pod exists, so Longhorn co-locates the replica with rhea, avoiding the cross-node attach failures found on 2026-09-24)..."
+                  echo "Creating restore PVC $RESTORE_PVC (dedicated restore-usb disk, rhea only)..."
                   kubectl apply -f - << EOF
                   apiVersion: v1
                   kind: PersistentVolumeClaim
@@ -104,9 +105,69 @@ spec:
                       kind: VolumeSnapshot
                       apiGroup: snapshot.storage.k8s.io
                   EOF
-                  echo "PVC created (will stay Pending until worker pod is scheduled — this is expected with WaitForFirstConsumer)."
+                  kubectl wait --for=jsonpath='{.status.phase}'=Bound "pvc/$RESTORE_PVC" -n "$NAMESPACE" --timeout=1800s
 
-                  echo "Starting worker pod $WORKER_POD immediately (its creation triggers the PVC to actually bind and attach)..."
+                  echo "Starting copy pod $COPY_POD (rsync from iSCSI-backed restore PVC onto local restore-usb disk — minimizes iSCSI exposure to just this phase, see ADR-0005 addendum)..."
+                  kubectl apply -f - << EOF
+                  apiVersion: v1
+                  kind: Pod
+                  metadata:
+                    name: $COPY_POD
+                    namespace: $NAMESPACE
+                    labels:
+                      app: backup-worker
+                  spec:
+                    restartPolicy: Never
+                    nodeSelector:
+                      kubernetes.io/hostname: rhea
+                    securityContext:
+                      runAsNonRoot: true
+                      runAsUser: $WORKER_RUN_AS_USER
+                      fsGroup: $WORKER_RUN_AS_USER
+                      seccompProfile:
+                        type: RuntimeDefault
+                    containers:
+                      - name: copy
+                        image: alpine/k8s:1.30.3
+                        securityContext:
+                          allowPrivilegeEscalation: false
+                          capabilities:
+                            drop: ["ALL"]
+                        command:
+                          - /bin/sh
+                          - -c
+                          - |
+                            set -e
+                            mkdir -p /tmp/pkgroot
+                            apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted rsync || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
+                            RSYNC="/tmp/pkgroot/usr/bin/rsync"
+                            echo "Cleaning any previous partial copy..."
+                            rm -rf /restore-local/*
+                            echo "Copying via rsync (resumable, retries only failed parts on re-run)..."
+                            "\$RSYNC" -a --info=progress2 /data/ /restore-local/
+                            echo "Copy complete."
+                        volumeMounts:
+                          - name: data
+                            mountPath: /data
+                            readOnly: true
+                          - name: restore-local
+                            mountPath: /restore-local
+                    volumes:
+                      - name: data
+                        persistentVolumeClaim:
+                          claimName: $RESTORE_PVC
+                      - name: restore-local
+                        hostPath:
+                          path: /mnt/restore-direct
+                          type: Directory
+                  EOF
+                  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$COPY_POD -n "$NAMESPACE" --timeout=7200s
+
+                  echo "Copy phase done — releasing iSCSI-backed restore PVC immediately..."
+                  kubectl delete pvc "$RESTORE_PVC" -n "$NAMESPACE" --ignore-not-found=true
+                  kubectl delete pod "$COPY_POD" -n "$NAMESPACE" --ignore-not-found=true
+
+                  echo "Starting worker pod $WORKER_POD (reads exclusively from local restore-usb copy — no iSCSI involved at all in this phase)..."
                   kubectl apply -f - << EOF
                   apiVersion: v1
                   kind: Pod
@@ -117,12 +178,6 @@ spec:
                       app: backup-worker
                   spec:
                     restartPolicy: Never
-                    # Pinned to rhea: the scratch-direct disk is mounted
-                    # directly on this node only. With WaitForFirstConsumer +
-                    # dataLocality=strict-local on the restore PVC's
-                    # StorageClass, this same pin also forces the restore
-                    # replica onto rhea — eliminating the cross-node attach
-                    # failures confirmed on 2026-09-24.
                     nodeSelector:
                       kubernetes.io/hostname: rhea
                     securityContext:
@@ -157,8 +212,9 @@ spec:
                             mountPath: /scratch
                     volumes:
                       - name: data
-                        persistentVolumeClaim:
-                          claimName: $RESTORE_PVC
+                        hostPath:
+                          path: /mnt/restore-direct
+                          type: Directory
                       - name: script
                         configMap:
                           name: backup-worker-script
