@@ -170,3 +170,55 @@
     group: "33"
     mode: '0755'
   when: inventory_hostname == "rhea"
+
+- name: Identify restore-usb device (rhea only, ~7TB dedicated backup restore-PVC disk, mounted directly — NOT via Longhorn)
+  shell: |
+    echo "{{ lsblk_output.stdout }}" | awk '$2 > 6000000000000 && $2 < 8000000000000 {print "/dev/"$1}' | grep -v "{{ longhorn_scratch_usb_device | default('') }}"
+  register: restore_usb_device_result
+  changed_when: false
+  when: inventory_hostname == "rhea"
+
+- name: Set restore-usb device fact
+  set_fact:
+    longhorn_restore_usb_device: "{{ restore_usb_device_result.stdout | trim }}"
+  when: inventory_hostname == "rhea"
+
+- name: Format restore-usb disk with ext4 (rhea only)
+  filesystem:
+    fstype: ext4
+    dev: "{{ longhorn_restore_usb_device }}"
+  when: inventory_hostname == "rhea"
+
+- name: Get UUID of restore-usb device
+  command: "blkid -s UUID -o value {{ longhorn_restore_usb_device }}"
+  register: restore_usb_uuid_result
+  changed_when: false
+  when: inventory_hostname == "rhea"
+
+- name: Set restore-usb UUID fact
+  set_fact:
+    longhorn_restore_usb_uuid: "{{ restore_usb_uuid_result.stdout | trim }}"
+  when: inventory_hostname == "rhea"
+
+- name: Create direct mount point for restore-usb
+  file:
+    path: /mnt/restore-direct
+    state: directory
+    mode: '0755'
+  when: inventory_hostname == "rhea"
+
+- name: Mount restore-usb disk persistently (by UUID, immune to device letter reshuffling)
+  mount:
+    path: /mnt/restore-direct
+    src: "UUID={{ longhorn_restore_usb_uuid }}"
+    fstype: ext4
+    state: mounted
+  when: inventory_hostname == "rhea"
+
+- name: Set correct ownership for backup worker (UID/GID 33, matches Rocinante's workerRunAsUser)
+  file:
+    path: /mnt/restore-direct
+    owner: "33"
+    group: "33"
+    mode: '0755'
+  when: inventory_hostname == "rhea"

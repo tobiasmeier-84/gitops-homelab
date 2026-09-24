@@ -124,6 +124,7 @@ module "rhea" {
     { datastore_id = "canterbury", size = 900, interface = "scsi1" },
     { datastore_id = "tachi", size = 100, interface = "scsi2" },
     { datastore_id = "scratch-usb", size = 7000, interface = "scsi3" }, # Backup pipeline scratch, isolated from canterbury
+    { datastore_id = "scratch-usb", size = 7000, interface = "scsi4" }, # Backup pipeline restore target — dedicated single-node disk, see ADR-0005 addendum on cross-node Longhorn attach failures
   ]
 
   network_interfaces = [
