@@ -5,6 +5,8 @@ metadata:
 provisioner: driver.longhorn.io
 allowVolumeExpansion: true
 reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
 parameters:
   numberOfReplicas: "1"
   diskSelector: "bulk"
+  dataLocality: "strict-local"

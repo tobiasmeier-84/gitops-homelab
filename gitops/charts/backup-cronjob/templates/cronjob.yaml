@@ -86,7 +86,7 @@ spec:
                   EOF
                   kubectl wait --for=jsonpath='{.status.readyToUse}'=true "volumesnapshot/$SNAP_NAME" -n "$NAMESPACE" --timeout=1800s
 
-                  echo "Restoring to PVC $RESTORE_PVC (single-replica, disposable)..."
+                  echo "Creating restore PVC $RESTORE_PVC (WaitForFirstConsumer + dataLocality=strict-local — binding deferred until the worker pod exists, so Longhorn co-locates the replica with rhea, avoiding the cross-node attach failures found on 2026-09-24)..."
                   kubectl apply -f - << EOF
                   apiVersion: v1
                   kind: PersistentVolumeClaim
@@ -104,9 +104,9 @@ spec:
                       kind: VolumeSnapshot
                       apiGroup: snapshot.storage.k8s.io
                   EOF
-                  kubectl wait --for=jsonpath='{.status.phase}'=Bound "pvc/$RESTORE_PVC" -n "$NAMESPACE" --timeout=1800s
+                  echo "PVC created (will stay Pending until worker pod is scheduled — this is expected with WaitForFirstConsumer)."
 
-                  echo "Starting worker pod $WORKER_POD (scratch space: direct hostPath mount on rhea, NOT Longhorn — see ADR-0005 addendum)..."
+                  echo "Starting worker pod $WORKER_POD immediately (its creation triggers the PVC to actually bind and attach)..."
                   kubectl apply -f - << EOF
                   apiVersion: v1
                   kind: Pod
@@ -118,11 +118,11 @@ spec:
                   spec:
                     restartPolicy: Never
                     # Pinned to rhea: the scratch-direct disk is mounted
-                    # directly on this node only, deliberately bypassing
-                    # Longhorn (real, repeated production incidents on its
-                    # iSCSI/instance-manager layer). hostPath requires
-                    # exact node placement, not just "a node with this
-                    # StorageClass" — there is no StorageClass anymore.
+                    # directly on this node only. With WaitForFirstConsumer +
+                    # dataLocality=strict-local on the restore PVC's
+                    # StorageClass, this same pin also forces the restore
+                    # replica onto rhea — eliminating the cross-node attach
+                    # failures confirmed on 2026-09-24.
                     nodeSelector:
                       kubernetes.io/hostname: rhea
                     securityContext:
