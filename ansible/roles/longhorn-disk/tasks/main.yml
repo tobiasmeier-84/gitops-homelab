@@ -28,50 +28,6 @@
   register: tachi_device_result
   changed_when: false
 
-- name: Identify scratch-usb device (rhea only, ~7TB dedicated backup scratch disk)
-  shell: |
-    echo "{{ lsblk_output.stdout }}" | awk '$2 > 6000000000000 && $2 < 8000000000000 {print "/dev/"$1}'
-  register: scratch_usb_device_result
-  changed_when: false
-  when: inventory_hostname == "rhea"
-
-- name: Set scratch-usb device fact
-  set_fact:
-    longhorn_scratch_usb_device: "{{ scratch_usb_device_result.stdout | trim }}"
-  when: inventory_hostname == "rhea"
-
-- name: Format scratch-usb disk with ext4 (rhea only)
-  filesystem:
-    fstype: ext4
-    dev: "{{ longhorn_scratch_usb_device }}"
-  when: inventory_hostname == "rhea"
-
-- name: Get UUID of scratch-usb device
-  command: "blkid -s UUID -o value {{ longhorn_scratch_usb_device }}"
-  register: scratch_usb_uuid_result
-  changed_when: false
-  when: inventory_hostname == "rhea"
-
-- name: Set scratch-usb UUID fact
-  set_fact:
-    longhorn_scratch_usb_uuid: "{{ scratch_usb_uuid_result.stdout | trim }}"
-  when: inventory_hostname == "rhea"
-
-- name: Create mount point for scratch-usb
-  file:
-    path: /mnt/longhorn/scratch-usb
-    state: directory
-    mode: '0755'
-  when: inventory_hostname == "rhea"
-
-- name: Mount scratch-usb disk persistently (by UUID, immune to device letter reshuffling)
-  mount:
-    path: /mnt/longhorn/scratch-usb
-    src: "UUID={{ longhorn_scratch_usb_uuid }}"
-    fstype: ext4
-    state: mounted
-  when: inventory_hostname == "rhea"
-
 - name: Set device facts
   set_fact:
     longhorn_canterbury_device: "{{ canterbury_device_result.stdout | trim }}"
@@ -133,8 +89,7 @@
     fstype: ext4
     state: mounted
 
-# ---- Tell Longhorn about both disks, tagged by tier, instead of relying
-# on its own single-default-disk auto-detection ----
+# ---- Tell Longhorn about both disks, tagged by tier ----
 
 - name: Register canterbury and tachi disks with Longhorn (bootstrap annotation — applies once, at initial node setup)
   kubernetes.core.k8s:
@@ -152,25 +107,66 @@
               {"path":"/mnt/longhorn/tachi","allowScheduling":true,"tags":["fast"]}
             ]
 
-# The annotation-based mechanism above only fires once, at a node's initial
-# Longhorn bootstrap — it does NOT re-sync on later edits (confirmed:
-# adding scratch-usb here and restarting longhorn-manager had no effect).
-# Adding a disk to an already-provisioned node requires patching the live
-# Longhorn Node CR directly instead.
-- name: Register scratch-usb disk with Longhorn directly (rhea only — Node CR patch, not the one-time bootstrap annotation)
-  kubernetes.core.k8s:
-    kubeconfig: /etc/rancher/rke2/rke2.yaml
-    kind: Node
-    api_version: longhorn.io/v1beta2
-    name: rhea
-    namespace: longhorn-system
-    state: patched
-    definition:
-      spec:
-        disks:
-          scratch-usb:
-            path: /mnt/longhorn/scratch-usb
-            allowScheduling: true
-            tags:
-              - scratch
+# ============================================================================
+# scratch-usb (rhea only): mounted DIRECTLY, deliberately NOT registered with
+# Longhorn. Real, repeated production incidents (2026-09-23, 2026-09-24) on
+# Longhorn's iSCSI/instance-manager layer — even a volume on physically
+# dedicated, isolated hardware was still affected, since the failure mode
+# lives in Longhorn's own network-attach mechanism, not any specific disk.
+# The worker pod is already hard-pinned to rhea (nodeSelector), so Longhorn's
+# cross-node flexibility was never actually being used here — mounting
+# directly via hostPath genuinely removes the failure mode from this
+# volume's path entirely. See ADR-0005 addendum.
+# ============================================================================
+
+- name: Identify scratch-usb device (rhea only, ~7TB dedicated backup scratch disk, mounted directly — NOT via Longhorn)
+  shell: |
+    echo "{{ lsblk_output.stdout }}" | awk '$2 > 6000000000000 && $2 < 8000000000000 {print "/dev/"$1}'
+  register: scratch_usb_device_result
+  changed_when: false
+  when: inventory_hostname == "rhea"
+
+- name: Set scratch-usb device fact
+  set_fact:
+    longhorn_scratch_usb_device: "{{ scratch_usb_device_result.stdout | trim }}"
+  when: inventory_hostname == "rhea"
+
+- name: Format scratch-usb disk with ext4 (rhea only)
+  filesystem:
+    fstype: ext4
+    dev: "{{ longhorn_scratch_usb_device }}"
+  when: inventory_hostname == "rhea"
+
+- name: Get UUID of scratch-usb device
+  command: "blkid -s UUID -o value {{ longhorn_scratch_usb_device }}"
+  register: scratch_usb_uuid_result
+  changed_when: false
+  when: inventory_hostname == "rhea"
+
+- name: Set scratch-usb UUID fact
+  set_fact:
+    longhorn_scratch_usb_uuid: "{{ scratch_usb_uuid_result.stdout | trim }}"
+  when: inventory_hostname == "rhea"
+
+- name: Create direct mount point for scratch-usb (deliberately NOT under /mnt/longhorn — no longer Longhorn-managed)
+  file:
+    path: /mnt/scratch-direct
+    state: directory
+    mode: '0755'
+  when: inventory_hostname == "rhea"
+
+- name: Mount scratch-usb disk persistently (by UUID, immune to device letter reshuffling)
+  mount:
+    path: /mnt/scratch-direct
+    src: "UUID={{ longhorn_scratch_usb_uuid }}"
+    fstype: ext4
+    state: mounted
+  when: inventory_hostname == "rhea"
+
+- name: Set correct ownership for backup worker (UID/GID 33, matches Rocinante's workerRunAsUser)
+  file:
+    path: /mnt/scratch-direct
+    owner: "33"
+    group: "33"
+    mode: '0755'
   when: inventory_hostname == "rhea"
