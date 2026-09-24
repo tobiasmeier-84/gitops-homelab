@@ -6,7 +6,12 @@ provisioner: driver.longhorn.io
 allowVolumeExpansion: true
 reclaimPolicy: Delete
 volumeBindingMode: WaitForFirstConsumer
+allowedTopologies:
+  - matchLabelExpressions:
+      - key: kubernetes.io/hostname
+        values:
+          - rhea
 parameters:
   numberOfReplicas: "1"
   diskSelector: "bulk"
-  dataLocality: "strict-local"
+  strictTopology: "true"
