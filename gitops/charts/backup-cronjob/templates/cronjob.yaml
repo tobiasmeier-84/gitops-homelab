@@ -57,7 +57,6 @@ spec:
                   RUN_ID=$(date +%Y%m%d-%H%M%S)
                   SNAP_NAME="${APP_NAME}-backup-${RUN_ID}"
                   RESTORE_PVC="${APP_NAME}-restore-${RUN_ID}"
-                  SCRATCH_PVC="${APP_NAME}-scratch-${RUN_ID}"
                   WORKER_POD="${APP_NAME}-worker-${RUN_ID}"
                   STATUS="UNKNOWN"
                   export RUN_ID APP_NAME
@@ -67,7 +66,6 @@ spec:
                     kubectl logs "$WORKER_POD" -n "$NAMESPACE" --timestamps > /tmp/worker-output.log 2>&1 || echo "(no worker log available)" > /tmp/worker-output.log
                     kubectl delete pod "$WORKER_POD" -n "$NAMESPACE" --ignore-not-found=true
                     kubectl delete pvc "$RESTORE_PVC" -n "$NAMESPACE" --ignore-not-found=true
-                    kubectl delete pvc "$SCRATCH_PVC" -n "$NAMESPACE" --ignore-not-found=true
                     kubectl delete volumesnapshot "$SNAP_NAME" -n "$NAMESPACE" --ignore-not-found=true
                     export STATUS
                     python3 /scripts-notify/notify.py || echo "WARNING: notification failed to send"
@@ -108,23 +106,7 @@ spec:
                   EOF
                   kubectl wait --for=jsonpath='{.status.phase}'=Bound "pvc/$RESTORE_PVC" -n "$NAMESPACE" --timeout=1800s
 
-                  echo "Creating scratch PVC $SCRATCH_PVC (compression scratch space, dedicated scratch-usb disk — isolated from canterbury, see ADR-0005 addendum)..."
-                  kubectl apply -f - << EOF
-                  apiVersion: v1
-                  kind: PersistentVolumeClaim
-                  metadata:
-                    name: $SCRATCH_PVC
-                    namespace: $NAMESPACE
-                  spec:
-                    accessModes: ["ReadWriteOnce"]
-                    storageClassName: longhorn-scratch-usb
-                    resources:
-                      requests:
-                        storage: 200Gi
-                  EOF
-                  kubectl wait --for=jsonpath='{.status.phase}'=Bound "pvc/$SCRATCH_PVC" -n "$NAMESPACE" --timeout=300s
-
-                  echo "Starting worker pod $WORKER_POD..."
+                  echo "Starting worker pod $WORKER_POD (scratch space: direct hostPath mount on rhea, NOT Longhorn — see ADR-0005 addendum)..."
                   kubectl apply -f - << EOF
                   apiVersion: v1
                   kind: Pod
@@ -135,12 +117,12 @@ spec:
                       app: backup-worker
                   spec:
                     restartPolicy: Never
-                    # Pinned to rhea: the scratch-usb disk (and its dedicated
-                    # Longhorn StorageClass) only physically exists on this
-                    # node. Without this, Kubernetes could schedule the
-                    # worker elsewhere, and Longhorn would transparently
-                    # reach the volume over the network anyway — silently
-                    # defeating the whole point of a dedicated local disk.
+                    # Pinned to rhea: the scratch-direct disk is mounted
+                    # directly on this node only, deliberately bypassing
+                    # Longhorn (real, repeated production incidents on its
+                    # iSCSI/instance-manager layer). hostPath requires
+                    # exact node placement, not just "a node with this
+                    # StorageClass" — there is no StorageClass anymore.
                     nodeSelector:
                       kubernetes.io/hostname: rhea
                     securityContext:
@@ -173,11 +155,6 @@ spec:
                             mountPath: /scripts
                           - name: scratch
                             mountPath: /scratch
-                        resources:
-                          requests:
-                            memory: "2Gi"
-                          limits:
-                            memory: "12Gi"
                     volumes:
                       - name: data
                         persistentVolumeClaim:
@@ -187,8 +164,9 @@ spec:
                           name: backup-worker-script
                           defaultMode: 0755
                       - name: scratch
-                        persistentVolumeClaim:
-                          claimName: $SCRATCH_PVC
+                        hostPath:
+                          path: /mnt/scratch-direct
+                          type: Directory
                   EOF
 
                   if kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$WORKER_POD -n "$NAMESPACE" --timeout=28800s; then
