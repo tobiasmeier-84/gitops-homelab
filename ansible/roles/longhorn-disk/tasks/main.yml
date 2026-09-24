@@ -107,6 +107,24 @@
               {"path":"/mnt/longhorn/tachi","allowScheduling":true,"tags":["fast"]}
             ]
 
+- name: Register restore-usb disk with Longhorn directly (rhea only — uniquely-tagged disk, the ONLY node where this tag exists, guaranteeing replica placement)
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    kind: Node
+    api_version: longhorn.io/v1beta2
+    name: rhea
+    namespace: longhorn-system
+    state: patched
+    definition:
+      spec:
+        disks:
+          restore-usb:
+            path: /mnt/restore-direct
+            allowScheduling: true
+            tags:
+              - restore
+  when: inventory_hostname == "rhea"
+
 # ============================================================================
 # scratch-usb (rhea only): mounted DIRECTLY, deliberately NOT registered with
 # Longhorn. Real, repeated production incidents (2026-09-23, 2026-09-24) on
