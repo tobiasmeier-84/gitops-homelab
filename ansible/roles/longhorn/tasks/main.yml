@@ -76,6 +76,13 @@
     state: present
   when: inventory_hostname == groups['rke2_nodes'][0]
 
+- name: Set Longhorn csi-allowed-topology-keys (required for strictTopology, used by backup-cronjob's restore PVC to co-locate with rhea — see ADR-0005 addendum)
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition: "{{ lookup('template', 'longhorn-csi-allowed-topology-keys-setting.yaml.j2') }}"
+    state: present
+  when: inventory_hostname == groups['rke2_nodes'][0]
+
 - name: Wait for instance-manager pods to restart and stabilize on the new network
   kubernetes.core.k8s_info:
     kubeconfig: /etc/rancher/rke2/rke2.yaml
