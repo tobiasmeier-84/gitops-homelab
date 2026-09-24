@@ -124,11 +124,6 @@
     longhorn_scratch_usb_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi3"
   when: inventory_hostname == "rhea"
 
-- name: Set scratch-usb device fact
-  set_fact:
-    longhorn_scratch_usb_device: "{{ scratch_usb_device_result.stdout | trim }}"
-  when: inventory_hostname == "rhea"
-
 - name: Format scratch-usb disk with ext4 (rhea only)
   filesystem:
     fstype: ext4
@@ -172,11 +167,6 @@
 - name: Identify restore-usb device (rhea only, scsi4 — dedicated backup restore-PVC disk, mounted directly — NOT via Longhorn)
   set_fact:
     longhorn_restore_usb_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi4"
-  when: inventory_hostname == "rhea"
-
-- name: Set restore-usb device fact
-  set_fact:
-    longhorn_restore_usb_device: "{{ restore_usb_device_result.stdout | trim }}"
   when: inventory_hostname == "rhea"
 
 - name: Format restore-usb disk with ext4 (rhea only)
