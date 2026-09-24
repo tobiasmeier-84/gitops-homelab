@@ -119,11 +119,9 @@
 # volume's path entirely. See ADR-0005 addendum.
 # ============================================================================
 
-- name: Identify scratch-usb device (rhea only, ~7TB dedicated backup scratch disk, mounted directly — NOT via Longhorn)
-  shell: |
-    echo "{{ lsblk_output.stdout }}" | awk '$2 > 6000000000000 && $2 < 8000000000000 {print "/dev/"$1}'
-  register: scratch_usb_device_result
-  changed_when: false
+- name: Identify scratch-usb device (rhea only, scsi3 — dedicated backup scratch disk, mounted directly — NOT via Longhorn)
+  set_fact:
+    longhorn_scratch_usb_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi3"
   when: inventory_hostname == "rhea"
 
 - name: Set scratch-usb device fact
@@ -171,11 +169,9 @@
     mode: '0755'
   when: inventory_hostname == "rhea"
 
-- name: Identify restore-usb device (rhea only, ~7TB dedicated backup restore-PVC disk, mounted directly — NOT via Longhorn)
-  shell: |
-    echo "{{ lsblk_output.stdout }}" | awk '$2 > 6000000000000 && $2 < 8000000000000 {print "/dev/"$1}' | grep -v "{{ longhorn_scratch_usb_device | default('') }}"
-  register: restore_usb_device_result
-  changed_when: false
+- name: Identify restore-usb device (rhea only, scsi4 — dedicated backup restore-PVC disk, mounted directly — NOT via Longhorn)
+  set_fact:
+    longhorn_restore_usb_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi4"
   when: inventory_hostname == "rhea"
 
 - name: Set restore-usb device fact
