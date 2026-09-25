@@ -53,7 +53,7 @@ spec:
         image:
           tag: "34.0.4-apache"
 
-        cronjob:
+                cronjob:
           enabled: true
           type: cronjob
           cronjob:
@@ -61,6 +61,20 @@ spec:
               runAsUser: 33
               runAsGroup: 33
               runAsNonRoot: true
+            affinity:
+              podAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - labelSelector:
+                      matchExpressions:
+                        - key: app.kubernetes.io/name
+                          operator: In
+                          values:
+                            - nextcloud
+                        - key: app.kubernetes.io/component
+                          operator: In
+                          values:
+                            - app
+                    topologyKey: kubernetes.io/hostname
 
         nextcloud:
           host: rocinante.gate.solsys.dev
