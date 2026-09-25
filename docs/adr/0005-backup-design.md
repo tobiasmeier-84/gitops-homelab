@@ -715,3 +715,66 @@ correctly in every test all along; it was specifically single-replica
   replica placement, the read itself still failed — the problem is
   structural to the clone/iSCSI mechanism, not fixable via
   scheduling
+
+  ## Addendum: root cause refined — failed replica rebuilds compounded by concurrent write load
+
+**Status:** Discovered 2026-09-25, during real-world testing of the
+maintenance-mode architecture (see prior addendum).
+
+### What we previously believed
+
+Every incident was attributed to Longhorn's documented iSCSI
+stale-session issue: an instance-manager pod restart changes IP,
+existing sessions can't reconnect, causing I/O errors.
+
+### What tonight's evidence actually shows
+
+Real, timestamped Longhorn manager logs (corrected for a genuine
+UTC/local timezone error made during initial investigation) show:
+
+1. A replica rebuild for Rocinante's live volume had been struggling
+   for at least 5+ minutes before the incident (repeated "skipped
+   rebuilding... another rebuild in progress" messages)
+2. The rebuild then failed outright: `"Replica ... failed to rebuild
+   too many times"`
+3. Longhorn immediately began recovery — tearing down the failed
+   replica, scheduling a new one
+4. ~30 seconds later, real SCSI-level errors began: `"Power-on or
+   device reset occurred"`, followed by `critical medium error`,
+   journal aborts, and read-only remounts — on the *destination*
+   `canterbury` volume our own file-copy pod was actively writing to
+   at the time
+
+**No instance-manager restart preceded this event on either node**
+(confirmed via pod age/restart counts — both had zero real restarts
+in the relevant window).
+
+### Refined theory
+
+The actual trigger is not session staleness, but **I/O contention**:
+a replica rebuild is itself a substantial, sustained read/write
+operation. When a rebuild is already struggling or has just failed
+(genuinely repeating over 5+ minutes), and a *second*, independent
+heavy write workload starts concurrently (our own backup pipeline),
+the combined I/O load on the node appears to exceed what the
+underlying stack can reliably service — manifesting as SCSI resets
+and medium errors, not because any specific session went stale, but
+from genuine real-time resource contention.
+
+### Implication for the backup pipeline
+
+Our own backup jobs may not simply be *victims* of Longhorn
+instability — they may be **actively triggering or worsening** it,
+by adding heavy I/O exactly when a background rebuild is already
+degraded. This suggests a real, practical mitigation worth adding:
+check the live production volume's `robustness` before starting any
+backup-related write-heavy step, and defer/retry if it is currently
+`degraded` (i.e., a rebuild is in progress).
+
+### Not yet resolved
+
+- Why replica rebuilds keep failing/struggling in the first place
+  remains an open question in its own right
+- Whether this fully explains every historical incident in this
+  document, or is one contributing factor among others, is not yet
+  certain
