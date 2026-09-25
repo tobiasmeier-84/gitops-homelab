@@ -601,3 +601,117 @@ cluster runs. Worth a dedicated investigation into V2's maturity/
 stability before considering migration; not attempted today given the
 real risk of migrating a production storage engine, and given the
 actual bottleneck (external bandwidth) wouldn't be improved by it anyway.
+
+## Addendum: architectural redesign — maintenance-mode consistency, abandoning the Longhorn restore-clone path
+
+**Status:** Design finalized 2026-09-25, following extensive real-world
+testing that conclusively isolated the actual root cause of the
+majority of backup reliability incidents documented in this ADR.
+
+### Root cause, finally and precisely confirmed
+
+Every recorded incident in this file traces to the same specific
+mechanism: **reading data through a Longhorn VolumeSnapshot's
+restore-clone volume, over its iSCSI-backed attachment.** This was
+confirmed with hard, timestamped evidence on 2026-09-25: snapshot
+*creation* completed in 4 seconds, the restore PVC *bound* in 4
+seconds — both consistently fast and reliable across every single test
+this whole investigation ever ran. The **only** step that has ever
+actually failed, in every incident, is reading the resulting cloned
+volume's data — whether via the worker pod directly, or (in the final
+confirming test) via a dedicated rsync copy pod, which simply hung
+silently for the full 2-hour timeout with no error at all.
+
+This closes the investigation definitively: the problem was never
+compression, memory, node placement, topology hints, or scratch-disk
+sharing — all real, valid things tested and ruled out along the way.
+It is specifically Longhorn's clone-volume iSCSI read path.
+
+### New design: application-level consistency instead of storage-level snapshotting
+
+Rather than depend on the clone-volume read path at all, consistency
+is now achieved via each application's own **maintenance mode**,
+paired with a **direct read from the live, already-stable production
+volume** — a fundamentally different, and so far always-reliable, code
+path (every multi-replica `canterbury`-backed volume has behaved
+correctly in every test all along; it was specifically single-replica
+*clone* volumes that failed).
+
+### Complete flow, per application (Rocinante as the first implementation)
+
+1. **Nextcloud → maintenance mode ON** (`occ maintenance:mode --on`)
+2. **In parallel, two independent pods launch simultaneously:**
+   - **File copy pod**: `rsync`s directly from the *live* Rocinante
+     PVC into a **new, single-replica, `canterbury`-backed**
+     PVC (any node — genuinely fast, no snapshot/clone involved,
+     just a plain new volume being written to)
+   - **DB dump pod**: `pg_dump` against Barbapiccola, unchanged from
+     the existing, already-proven implementation
+3. **Wait for both**, tracking each outcome **independently**
+   (`FILE_COPY_STATUS`, `DB_DUMP_STATUS` — never a single combined
+   pass/fail)
+4. **Maintenance mode OFF immediately**, regardless of either
+   outcome — the app is never held down waiting on something that
+   has already failed. This is the real downtime window, and it is
+   now bounded by the *fast* `canterbury` copy speed, not by the
+   slow USB transfer or the compression/upload phases.
+5. **From here, app-back-online, the two paths are fully
+   independent and don't block each other:**
+   - If file copy succeeded: slow-transfer the data from the
+     temporary `canterbury` copy to `rhea`'s isolated USB disk
+     (`restore-usb`) over the STORAGE VLAN — genuinely allowed to be
+     slow, nobody is waiting on it anymore. Then compress, encrypt,
+     upload, prune, exactly as already proven working.
+   - If DB dump succeeded: encrypt, upload, prune directly (already
+     fast, no slow transfer needed).
+   - If either failed: skip only *that* component's remaining
+     steps; the other proceeds and completes normally.
+6. **One final report**, clearly itemized per component — e.g.
+   *"Files: SUCCEEDED (57GB uploaded, both chains) — Database:
+   FAILED (dump error, see attached log)"* — never an ambiguous
+   single pass/fail for the whole run.
+7. Delete the temporary `canterbury` copy PVC once the slow transfer
+   to USB completes (no longer needed).
+
+### What stays exactly as already proven
+
+- The `rhea`-only `scratch-usb` and `restore-usb` dedicated USB
+  disks, and their uniquely-tagged Longhorn StorageClass pattern
+- Compression (`zstd -T4`), integrity verification, dual-chain
+  `age` encryption, dual-provider upload, and version-aware pruning
+  logic — all unchanged
+- The DB dump mechanism itself (`pg_dump`, `postgresql18-client`
+  from the edge repo, the libexec path fix) — unchanged, just now
+  launched in parallel with the file copy rather than on its own
+  independent schedule
+- Email notification via `backup-smtp-credentials` — extended to
+  report both components' status independently
+
+### What's new, not yet built
+
+- A genuinely new, disposable, single-replica `canterbury`-backed
+  StorageClass for the fast intermediate copy target (distinct from
+  the now-abandoned restore-clone StorageClass)
+- Parallel pod launch/wait logic in the orchestrator (previously
+  sequential)
+- Independent status tracking and itemized reporting for two
+  components instead of one
+- Maintenance-mode on/off calls via `occ`, integrated into the
+  orchestrator's own flow
+- The slow, STORAGE-VLAN transfer step from `canterbury` to
+  `rhea`'s USB disk, decoupled from the maintenance window
+
+### Explicitly ruled out
+
+- Longhorn V2 data engine: real CPU cost (1-2 cores per
+  instance-manager) confirmed too high for these 4-core nodes; also
+  blocked by kernel version (6.1, below the 5.19 minimum)
+- iSCSI `replacement_timeout` tuning: would only delay, not fix, the
+  underlying stale-session mechanism
+- Continuing to debug the clone-volume read path itself: three
+  separate, properly-documented Longhorn mechanisms
+  (`dataLocality`, `allowedTopologies`+`strictTopology`, unique
+  disk-tag placement) were tried; even with confirmed correct
+  replica placement, the read itself still failed — the problem is
+  structural to the clone/iSCSI mechanism, not fixable via
+  scheduling
