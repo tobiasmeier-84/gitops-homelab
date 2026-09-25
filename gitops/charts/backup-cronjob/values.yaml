@@ -1,8 +1,11 @@
 appName: rocinante
 namespace: rocinante
 pvcName: rocinante-nextcloud-nextcloud
-pvcSize: 150Gi
-storageClassName: longhorn-bulk
-schedule: "0 3 * * 0"  # weekly, Sunday 3ammkdir -p templates/s
-workerRunAsUser: 1000
+pvcSize: 250Gi
+workerRunAsUser: 33
 notifyEmail: admin@solsys.dev
+schedule: "0 3 * * 0"
+nextcloudDeployment: rocinante-nextcloud
+dbHost: barbapiccola-rw.rocinante.svc.cluster.local
+dbPort: "5432"
+dbSecretName: barbapiccola-app

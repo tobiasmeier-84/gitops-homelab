@@ -35,17 +35,23 @@ spec:
                   value: "{{ .Values.pvcName }}"
                 - name: PVC_SIZE
                   value: "{{ .Values.pvcSize }}"
-                - name: STORAGE_CLASS
-                  value: "{{ .Values.storageClassName }}"
                 - name: WORKER_RUN_AS_USER
                   value: "{{ .Values.workerRunAsUser }}"
                 - name: NOTIFY_EMAIL
                   value: "{{ .Values.notifyEmail }}"
+                - name: NEXTCLOUD_DEPLOYMENT
+                  value: "{{ .Values.nextcloudDeployment }}"
+                - name: DB_HOST
+                  value: "{{ .Values.dbHost }}"
+                - name: DB_PORT
+                  value: "{{ .Values.dbPort }}"
               envFrom:
                 - secretRef:
                     name: backup-chain-credentials
                 - secretRef:
                     name: backup-smtp-credentials
+                - secretRef:
+                    name: {{ .Values.dbSecretName }}
               volumeMounts:
                 - name: notify-script
                   mountPath: /scripts-notify
@@ -55,71 +61,76 @@ spec:
                 - |
                   set -e
                   RUN_ID=$(date +%Y%m%d-%H%M%S)
-                  SNAP_NAME="${APP_NAME}-backup-${RUN_ID}"
-                  RESTORE_PVC="${APP_NAME}-restore-${RUN_ID}"
-                  COPY_POD="${APP_NAME}-copy-${RUN_ID}"
-                  WORKER_POD="${APP_NAME}-worker-${RUN_ID}"
-                  STATUS="UNKNOWN"
+                  FILE_COPY_PVC="${APP_NAME}-filecopy-${RUN_ID}"
+                  DB_COPY_PVC="${APP_NAME}-dbcopy-${RUN_ID}"
+                  FILECOPY_POD="${APP_NAME}-filecopy-${RUN_ID}"
+                  DBDUMP_POD="${APP_NAME}-dbdump-${RUN_ID}"
+                  TRANSFER_POD="${APP_NAME}-transfer-${RUN_ID}"
+                  FILEPROCESS_POD="${APP_NAME}-fileprocess-${RUN_ID}"
+                  DBPROCESS_POD="${APP_NAME}-dbprocess-${RUN_ID}"
+                  FILE_COPY_STATUS="UNKNOWN"
+                  DB_DUMP_STATUS="UNKNOWN"
+                  FILE_PROCESS_STATUS="SKIPPED"
+                  DB_PROCESS_STATUS="SKIPPED"
                   export RUN_ID APP_NAME
 
                   cleanup() {
                     echo "Cleaning up..."
-                    kubectl logs "$WORKER_POD" -n "$NAMESPACE" --timestamps > /tmp/worker-output.log 2>&1 || kubectl logs "$COPY_POD" -n "$NAMESPACE" --timestamps > /tmp/worker-output.log 2>&1 || echo "(no worker log available)" > /tmp/worker-output.log
-                    kubectl delete pod "$WORKER_POD" "$COPY_POD" -n "$NAMESPACE" --ignore-not-found=true
-                    kubectl delete pvc "$RESTORE_PVC" -n "$NAMESPACE" --ignore-not-found=true
-                    kubectl delete volumesnapshot "$SNAP_NAME" -n "$NAMESPACE" --ignore-not-found=true
-                    export STATUS
+                    for p in "$FILECOPY_POD" "$DBDUMP_POD" "$TRANSFER_POD" "$FILEPROCESS_POD" "$DBPROCESS_POD"; do
+                      kubectl logs "$p" -n "$NAMESPACE" --timestamps >> /tmp/worker-output.log 2>&1 || true
+                      kubectl delete pod "$p" -n "$NAMESPACE" --ignore-not-found=true
+                    done
+                    kubectl delete pvc "$FILE_COPY_PVC" "$DB_COPY_PVC" -n "$NAMESPACE" --ignore-not-found=true
+                    export STATUS="Files: ${FILE_COPY_STATUS}/${FILE_PROCESS_STATUS}, Database: ${DB_DUMP_STATUS}/${DB_PROCESS_STATUS} (upload/prune not yet enabled — testing phase)"
                     python3 /scripts-notify/notify.py || echo "WARNING: notification failed to send"
                   }
                   trap cleanup EXIT
+                  : > /tmp/worker-output.log
 
-                  echo "Creating snapshot $SNAP_NAME..."
-                  kubectl apply -f - << EOF
-                  apiVersion: snapshot.storage.k8s.io/v1
-                  kind: VolumeSnapshot
-                  metadata:
-                    name: $SNAP_NAME
-                    namespace: $NAMESPACE
-                  spec:
-                    volumeSnapshotClassName: longhorn-snapshot-vsc
-                    source:
-                      persistentVolumeClaimName: $PVC_NAME
-                  EOF
-                  kubectl wait --for=jsonpath='{.status.readyToUse}'=true "volumesnapshot/$SNAP_NAME" -n "$NAMESPACE" --timeout=1800s
+                  echo "Setting Nextcloud maintenance mode ON..."
+                  kubectl exec -n "$NAMESPACE" deploy/"$NEXTCLOUD_DEPLOYMENT" -- su -s /bin/sh www-data -c "php occ maintenance:mode --on"
 
-                  echo "Creating restore PVC $RESTORE_PVC (dedicated restore-usb disk, rhea only)..."
+                  echo "Creating fast, disposable canterbury-backed PVCs for file copy and DB dump..."
                   kubectl apply -f - << EOF
                   apiVersion: v1
                   kind: PersistentVolumeClaim
                   metadata:
-                    name: $RESTORE_PVC
+                    name: $FILE_COPY_PVC
                     namespace: $NAMESPACE
                   spec:
                     accessModes: ["ReadWriteOnce"]
-                    storageClassName: longhorn-bulk-single-replica
+                    storageClassName: longhorn-canterbury-single-replica
                     resources:
                       requests:
                         storage: $PVC_SIZE
-                    dataSource:
-                      name: $SNAP_NAME
-                      kind: VolumeSnapshot
-                      apiGroup: snapshot.storage.k8s.io
                   EOF
-                  kubectl wait --for=jsonpath='{.status.phase}'=Bound "pvc/$RESTORE_PVC" -n "$NAMESPACE" --timeout=1800s
+                  kubectl apply -f - << EOF
+                  apiVersion: v1
+                  kind: PersistentVolumeClaim
+                  metadata:
+                    name: $DB_COPY_PVC
+                    namespace: $NAMESPACE
+                  spec:
+                    accessModes: ["ReadWriteOnce"]
+                    storageClassName: longhorn-canterbury-single-replica
+                    resources:
+                      requests:
+                        storage: 5Gi
+                  EOF
+                  kubectl wait --for=jsonpath='{.status.phase}'=Bound "pvc/$FILE_COPY_PVC" -n "$NAMESPACE" --timeout=300s
+                  kubectl wait --for=jsonpath='{.status.phase}'=Bound "pvc/$DB_COPY_PVC" -n "$NAMESPACE" --timeout=300s
 
-                  echo "Starting copy pod $COPY_POD (rsync from iSCSI-backed restore PVC onto local restore-usb disk — minimizes iSCSI exposure to just this phase, see ADR-0005 addendum)..."
+                  echo "Starting file copy pod (rsync from LIVE production PVC, read-only, to fast canterbury copy — no snapshot/clone involved) and DB dump pod, in parallel..."
                   kubectl apply -f - << EOF
                   apiVersion: v1
                   kind: Pod
                   metadata:
-                    name: $COPY_POD
+                    name: $FILECOPY_POD
                     namespace: $NAMESPACE
                     labels:
                       app: backup-worker
                   spec:
                     restartPolicy: Never
-                    nodeSelector:
-                      kubernetes.io/hostname: rhea
                     securityContext:
                       runAsNonRoot: true
                       runAsUser: $WORKER_RUN_AS_USER
@@ -127,7 +138,7 @@ spec:
                       seccompProfile:
                         type: RuntimeDefault
                     containers:
-                      - name: copy
+                      - name: filecopy
                         image: alpine/k8s:1.30.3
                         securityContext:
                           allowPrivilegeEscalation: false
@@ -140,46 +151,34 @@ spec:
                             set -e
                             mkdir -p /tmp/pkgroot
                             apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted rsync || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
-                            RSYNC="/tmp/pkgroot/usr/bin/rsync"
-                            echo "Cleaning any previous partial copy..."
-                            rm -rf /restore-local/*
-                            echo "Copying via rsync (resumable, retries only failed parts on re-run)..."
-                            "\$RSYNC" -a --info=progress2 /data/ /restore-local/
-                            echo "Copy complete."
+                            echo "Copying live data via rsync..."
+                            /tmp/pkgroot/usr/bin/rsync -a --info=progress2 /live-data/ /copy-target/
+                            echo "File copy complete."
                         volumeMounts:
-                          - name: data
-                            mountPath: /data
+                          - name: live-data
+                            mountPath: /live-data
                             readOnly: true
-                          - name: restore-local
-                            mountPath: /restore-local
+                          - name: copy-target
+                            mountPath: /copy-target
                     volumes:
-                      - name: data
+                      - name: live-data
                         persistentVolumeClaim:
-                          claimName: $RESTORE_PVC
-                      - name: restore-local
-                        hostPath:
-                          path: /mnt/restore-direct
-                          type: Directory
+                          claimName: $PVC_NAME
+                      - name: copy-target
+                        persistentVolumeClaim:
+                          claimName: $FILE_COPY_PVC
                   EOF
-                  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$COPY_POD -n "$NAMESPACE" --timeout=7200s
 
-                  echo "Copy phase done — releasing iSCSI-backed restore PVC immediately..."
-                  kubectl delete pvc "$RESTORE_PVC" -n "$NAMESPACE" --ignore-not-found=true
-                  kubectl delete pod "$COPY_POD" -n "$NAMESPACE" --ignore-not-found=true
-
-                  echo "Starting worker pod $WORKER_POD (reads exclusively from local restore-usb copy — no iSCSI involved at all in this phase)..."
                   kubectl apply -f - << EOF
                   apiVersion: v1
                   kind: Pod
                   metadata:
-                    name: $WORKER_POD
+                    name: $DBDUMP_POD
                     namespace: $NAMESPACE
                     labels:
                       app: backup-worker
                   spec:
                     restartPolicy: Never
-                    nodeSelector:
-                      kubernetes.io/hostname: rhea
                     securityContext:
                       runAsNonRoot: true
                       runAsUser: $WORKER_RUN_AS_USER
@@ -187,7 +186,7 @@ spec:
                       seccompProfile:
                         type: RuntimeDefault
                     containers:
-                      - name: worker
+                      - name: dbdump
                         image: alpine/k8s:1.30.3
                         securityContext:
                           allowPrivilegeEscalation: false
@@ -195,42 +194,246 @@ spec:
                             drop: ["ALL"]
                         envFrom:
                           - secretRef:
-                              name: backup-chain-credentials
+                              name: {{ .Values.dbSecretName }}
                         env:
-                          - name: APP_NAME
-                            value: "$APP_NAME"
-                          - name: RUN_ID
-                            value: "$RUN_ID"
-                        command: ["/bin/sh", "/scripts/backup-worker.sh"]
+                          - name: DB_HOST
+                            value: "$DB_HOST"
+                          - name: DB_PORT
+                            value: "$DB_PORT"
+                        command:
+                          - /bin/sh
+                          - -c
+                          - |
+                            set -e
+                            mkdir -p /tmp/pkgroot
+                            apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted --repository https://dl-cdn.alpinelinux.org/alpine/edge/main postgresql18-client || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
+                            PGDUMP="/tmp/pkgroot/usr/libexec/postgresql18/pg_dump"
+                            if [ ! -x "\$PGDUMP" ]; then
+                              echo "FATAL: pg_dump not found."
+                              exit 1
+                            fi
+                            export PGPASSWORD="\$password"
+                            echo "Dumping database..."
+                            "\$PGDUMP" -h "\$DB_HOST" -p "\$DB_PORT" -U "\$username" -d "\$dbname" -F c -f /dbcopy/dump.sql
+                            echo "DB dump complete."
                         volumeMounts:
-                          - name: data
-                            mountPath: /data
-                            readOnly: true
-                          - name: script
-                            mountPath: /scripts
-                          - name: scratch
-                            mountPath: /scratch
+                          - name: dbcopy
+                            mountPath: /dbcopy
                     volumes:
-                      - name: data
-                        hostPath:
-                          path: /mnt/restore-direct
-                          type: Directory
-                      - name: script
-                        configMap:
-                          name: backup-worker-script
-                          defaultMode: 0755
-                      - name: scratch
-                        hostPath:
-                          path: /mnt/scratch-direct
-                          type: Directory
+                      - name: dbcopy
+                        persistentVolumeClaim:
+                          claimName: $DB_COPY_PVC
                   EOF
 
-                  if kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$WORKER_POD -n "$NAMESPACE" --timeout=28800s; then
-                    STATUS="SUCCEEDED"
+                  echo "Waiting for both to complete (independently)..."
+                  if kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$FILECOPY_POD -n "$NAMESPACE" --timeout=1800s; then
+                    FILE_COPY_STATUS="SUCCEEDED"
                   else
-                    STATUS="FAILED"
+                    FILE_COPY_STATUS="FAILED"
                   fi
-                  echo "Backup run $RUN_ID: $STATUS"
+                  if kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$DBDUMP_POD -n "$NAMESPACE" --timeout=1800s; then
+                    DB_DUMP_STATUS="SUCCEEDED"
+                  else
+                    DB_DUMP_STATUS="FAILED"
+                  fi
+
+                  echo "Setting Nextcloud maintenance mode OFF (real downtime window ends here, regardless of outcome)..."
+                  kubectl exec -n "$NAMESPACE" deploy/"$NEXTCLOUD_DEPLOYMENT" -- su -s /bin/sh www-data -c "php occ maintenance:mode --off"
+
+                  kubectl delete pod "$FILECOPY_POD" "$DBDUMP_POD" -n "$NAMESPACE" --ignore-not-found=true
+
+                  if [ "$FILE_COPY_STATUS" = "SUCCEEDED" ]; then
+                    echo "=== File path: slow transfer to rhea's USB disk, then compress+encrypt (upload/prune disabled for testing) ==="
+                    kubectl apply -f - << EOF
+                    apiVersion: v1
+                    kind: Pod
+                    metadata:
+                      name: $TRANSFER_POD
+                      namespace: $NAMESPACE
+                      labels:
+                        app: backup-worker
+                    spec:
+                      restartPolicy: Never
+                      nodeSelector:
+                        kubernetes.io/hostname: rhea
+                      securityContext:
+                        runAsNonRoot: true
+                        runAsUser: $WORKER_RUN_AS_USER
+                        fsGroup: $WORKER_RUN_AS_USER
+                        seccompProfile:
+                          type: RuntimeDefault
+                      containers:
+                        - name: transfer
+                          image: alpine/k8s:1.30.3
+                          securityContext:
+                            allowPrivilegeEscalation: false
+                            capabilities:
+                              drop: ["ALL"]
+                          command:
+                            - /bin/sh
+                            - -c
+                            - |
+                              set -e
+                              mkdir -p /tmp/pkgroot
+                              apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted rsync || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
+                              rm -rf /restore-local/*
+                              echo "Transferring over STORAGE VLAN to local USB disk (this is allowed to be slow — app is already back online)..."
+                              /tmp/pkgroot/usr/bin/rsync -a --info=progress2 /fast-copy/ /restore-local/
+                              echo "Transfer complete."
+                          volumeMounts:
+                            - name: fast-copy
+                              mountPath: /fast-copy
+                              readOnly: true
+                            - name: restore-local
+                              mountPath: /restore-local
+                      volumes:
+                        - name: fast-copy
+                          persistentVolumeClaim:
+                            claimName: $FILE_COPY_PVC
+                        - name: restore-local
+                          hostPath:
+                            path: /mnt/restore-direct
+                            type: Directory
+                    EOF
+                    kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$TRANSFER_POD -n "$NAMESPACE" --timeout=7200s
+                    kubectl delete pod "$TRANSFER_POD" -n "$NAMESPACE" --ignore-not-found=true
+                    kubectl delete pvc "$FILE_COPY_PVC" -n "$NAMESPACE" --ignore-not-found=true
+
+                    kubectl apply -f - << EOF
+                    apiVersion: v1
+                    kind: Pod
+                    metadata:
+                      name: $FILEPROCESS_POD
+                      namespace: $NAMESPACE
+                      labels:
+                        app: backup-worker
+                    spec:
+                      restartPolicy: Never
+                      nodeSelector:
+                        kubernetes.io/hostname: rhea
+                      securityContext:
+                        runAsNonRoot: true
+                        runAsUser: $WORKER_RUN_AS_USER
+                        fsGroup: $WORKER_RUN_AS_USER
+                        seccompProfile:
+                          type: RuntimeDefault
+                      containers:
+                        - name: fileprocess
+                          image: alpine/k8s:1.30.3
+                          securityContext:
+                            allowPrivilegeEscalation: false
+                            capabilities:
+                              drop: ["ALL"]
+                          command:
+                            - /bin/sh
+                            - -c
+                            - |
+                              set -e
+                              set -o pipefail
+                              mkdir -p /tmp/pkgroot
+                              apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted zstd age || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
+                              ZSTD="/tmp/pkgroot/usr/bin/zstd"
+                              ARCHIVE="/scratch/${APP_NAME}-${RUN_ID}.tar.zst"
+                              echo "Compressing..."
+                              tar -C /restore-local -cf - . | "\$ZSTD" -T4 -o "\$ARCHIVE"
+                              ARCHIVE_SIZE=\$(stat -c%s "\$ARCHIVE" 2>/dev/null || wc -c < "\$ARCHIVE")
+                              echo "Archive size: \${ARCHIVE_SIZE} bytes"
+                              if [ "\$ARCHIVE_SIZE" -lt 1048576 ]; then
+                                echo "FATAL: archive suspiciously small, aborting."
+                                exit 1
+                              fi
+                              if ! "\$ZSTD" -t "\$ARCHIVE"; then
+                                echo "FATAL: zstd integrity check failed."
+                                exit 1
+                              fi
+                              echo "=== UPLOAD/PRUNE DISABLED FOR TESTING — encrypted blobs left on scratch disk for manual inspection ==="
+                              # (encryption + upload + pruning intentionally not yet implemented in this test phase)
+                              echo "File processing complete (stopped before upload, as requested)."
+                          volumeMounts:
+                            - name: restore-local
+                              mountPath: /restore-local
+                              readOnly: true
+                            - name: scratch
+                              mountPath: /scratch
+                      volumes:
+                        - name: restore-local
+                          hostPath:
+                            path: /mnt/restore-direct
+                            type: Directory
+                        - name: scratch
+                          hostPath:
+                            path: /mnt/scratch-direct
+                            type: Directory
+                    EOF
+                    if kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$FILEPROCESS_POD -n "$NAMESPACE" --timeout=28800s; then
+                      FILE_PROCESS_STATUS="SUCCEEDED"
+                    else
+                      FILE_PROCESS_STATUS="FAILED"
+                    fi
+                    kubectl delete pod "$FILEPROCESS_POD" -n "$NAMESPACE" --ignore-not-found=true
+                  else
+                    echo "File copy failed — skipping transfer/process steps for files."
+                  fi
+
+                  if [ "$DB_DUMP_STATUS" = "SUCCEEDED" ]; then
+                    echo "=== DB path: compress+encrypt directly from the fast canterbury copy (upload/prune disabled for testing) ==="
+                    kubectl apply -f - << EOF
+                    apiVersion: v1
+                    kind: Pod
+                    metadata:
+                      name: $DBPROCESS_POD
+                      namespace: $NAMESPACE
+                      labels:
+                        app: backup-worker
+                    spec:
+                      restartPolicy: Never
+                      securityContext:
+                        runAsNonRoot: true
+                        runAsUser: $WORKER_RUN_AS_USER
+                        fsGroup: $WORKER_RUN_AS_USER
+                        seccompProfile:
+                          type: RuntimeDefault
+                      containers:
+                        - name: dbprocess
+                          image: alpine/k8s:1.30.3
+                          securityContext:
+                            allowPrivilegeEscalation: false
+                            capabilities:
+                              drop: ["ALL"]
+                          command:
+                            - /bin/sh
+                            - -c
+                            - |
+                              set -e
+                              mkdir -p /tmp/pkgroot
+                              apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age || echo "apk had non-fatal post-install trigger errors (expected non-root), continuing"
+                              DUMP_SIZE=\$(stat -c%s /dbcopy/dump.sql 2>/dev/null || wc -c < /dbcopy/dump.sql)
+                              echo "Dump size: \${DUMP_SIZE} bytes"
+                              if [ "\$DUMP_SIZE" -lt 10240 ]; then
+                                echo "FATAL: dump suspiciously small, aborting."
+                                exit 1
+                              fi
+                              echo "=== UPLOAD/PRUNE DISABLED FOR TESTING — dump left in place for manual inspection ==="
+                              echo "DB processing complete (stopped before upload, as requested)."
+                          volumeMounts:
+                            - name: dbcopy
+                              mountPath: /dbcopy
+                      volumes:
+                        - name: dbcopy
+                          persistentVolumeClaim:
+                            claimName: $DB_COPY_PVC
+                    EOF
+                    if kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/$DBPROCESS_POD -n "$NAMESPACE" --timeout=1800s; then
+                      DB_PROCESS_STATUS="SUCCEEDED"
+                    else
+                      DB_PROCESS_STATUS="FAILED"
+                    fi
+                    kubectl delete pod "$DBPROCESS_POD" -n "$NAMESPACE" --ignore-not-found=true
+                  else
+                    echo "DB dump failed — skipping process step for database."
+                  fi
+
+                  echo "Backup run $RUN_ID: Files: ${FILE_COPY_STATUS}/${FILE_PROCESS_STATUS}, Database: ${DB_DUMP_STATUS}/${DB_PROCESS_STATUS}"
           volumes:
             - name: notify-script
               configMap:
