@@ -170,6 +170,11 @@ spec:
                             set -e
                             mkdir -p /tmp/pkgroot
                             apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted rsync || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
+                            echo "=== Diagnostic: identity and write test before rsync ==="
+                            id
+                            ls -la /copy-target
+                            touch /copy-target/diag-test-file && echo "DIAG: touch succeeded" || echo "DIAG: touch FAILED"
+                            echo "=== End diagnostic ==="
                             echo "Copying live data via rsync..."
                             /tmp/pkgroot/usr/bin/rsync -a --info=progress2 /live-data/ /copy-target/
                             echo "File copy complete."
