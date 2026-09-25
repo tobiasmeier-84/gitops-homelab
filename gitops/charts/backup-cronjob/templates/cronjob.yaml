@@ -170,6 +170,7 @@ spec:
                             set -e
                             mkdir -p /tmp/pkgroot
                             apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted rsync || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
+                            export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
                             echo "=== Diagnostic: identity and write test before rsync ==="
                             id
                             ls -la /copy-target
@@ -301,6 +302,7 @@ spec:
                               set -e
                               mkdir -p /tmp/pkgroot
                               apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted rsync || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
+                              export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
                               rm -rf /restore-local/*
                               echo "Transferring over STORAGE VLAN to local USB disk (this is allowed to be slow — app is already back online)..."
                               /tmp/pkgroot/usr/bin/rsync -a --info=progress2 /fast-copy/ /restore-local/
