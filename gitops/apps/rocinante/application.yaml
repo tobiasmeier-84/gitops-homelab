@@ -53,7 +53,7 @@ spec:
         image:
           tag: "34.0.4-apache"
 
-                cronjob:
+        cronjob:
           enabled: true
           type: cronjob
           cronjob:
