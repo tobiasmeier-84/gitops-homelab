@@ -131,6 +131,25 @@ spec:
                       app: backup-worker
                   spec:
                     restartPolicy: Never
+                    # Must co-locate with wherever the LIVE Nextcloud pod
+                    # currently runs — the source PVC is RWO and already
+                    # attached there. Without this, the scheduler can place
+                    # us on a different node and hit a real Multi-Attach
+                    # conflict (confirmed 2026-09-25).
+                    affinity:
+                      podAffinity:
+                        requiredDuringSchedulingIgnoredDuringExecution:
+                          - labelSelector:
+                              matchExpressions:
+                                - key: app.kubernetes.io/name
+                                  operator: In
+                                  values:
+                                    - nextcloud
+                                - key: app.kubernetes.io/component
+                                  operator: In
+                                  values:
+                                    - app
+                            topologyKey: kubernetes.io/hostname
                     securityContext:
                       runAsNonRoot: true
                       runAsUser: $WORKER_RUN_AS_USER
