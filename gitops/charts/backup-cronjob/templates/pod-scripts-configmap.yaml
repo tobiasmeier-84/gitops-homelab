@@ -5,7 +5,7 @@ metadata:
   namespace: {{ .Values.namespace }}
 data:
   rsync-lib.sh: |
-    # Sourced by copy.sh and transfer.sh (not executed directly).
+    # Sourced by copy.sh and receiver.sh (not executed directly).
     setup_rsync() {
       mkdir -p /tmp/pkgroot
       apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted rsync || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
@@ -17,22 +17,30 @@ data:
       fi
     }
 
-    # run_rsync LABEL SRC DST — retries up to 3 times (rsync resumes where it stopped).
-    # Exit 24 (files vanished mid-copy) is expected while the app is online and is accepted.
+    # run_rsync LABEL SRC DST
+    # Retries only network-level failures (exit 10/12/30/35). Exit 24 (files
+    # vanished while the app is online) is expected and accepted.
     run_rsync() {
       label="$1"
       src="$2"
       dst="$3"
       attempt=0
       while true; do
-        "$RSYNC" -a --delete --exclude=/lost+found --stats "$src" "$dst" && return 0
-        rc=$?
-        if [ "$rc" -eq 24 ]; then
-          echo "$label: rsync exit 24 (files vanished during copy) - acceptable"
-          return 0
-        fi
+        rc=0
+        "$RSYNC" -a --delete --exclude=/lost+found --stats --timeout=300 --contimeout=30 "$src" "$dst" || rc=$?
+        case "$rc" in
+          0|24)
+            return 0
+            ;;
+          10|12|30|35)
+            ;;
+          *)
+            echo "$label: rsync failed with exit $rc - not retrying (only network errors are retried)"
+            return 1
+            ;;
+        esac
         attempt=$((attempt + 1))
-        echo "$label: rsync failed with exit $rc (attempt $attempt of 3)"
+        echo "$label: network error, rsync exit $rc (attempt $attempt of 3)"
         if [ "$attempt" -ge 3 ]; then
           return 1
         fi
@@ -40,31 +48,48 @@ data:
       done
     }
 
+  receiver.sh: |
+    #!/bin/sh
+    set -e
+    . /scripts/rsync-lib.sh
+    setup_rsync
+
+    mkdir -p /restore-local/data
+    umask 077
+    printf 'backup:%s\n' "$RSYNC_PASSWORD" > /tmp/rsyncd.secrets
+    chmod 600 /tmp/rsyncd.secrets
+
+    cat > /tmp/rsyncd.conf << 'CONF'
+    pid file = /tmp/rsyncd.pid
+    lock file = /tmp/rsyncd.lock
+    log file = /tmp/rsyncd.log
+    use chroot = no
+    port = 8873
+    [data]
+        path = /restore-local/data
+        read only = no
+        list = no
+        auth users = backup
+        secrets file = /tmp/rsyncd.secrets
+    CONF
+
+    : > /tmp/rsyncd.log
+    tail -F /tmp/rsyncd.log &
+    ( while true; do sleep 300; echo "heartbeat $(date -u +%H:%M:%SZ): $(df -h /restore-local | tail -1)"; done ) &
+    echo "Starting rsync daemon on port 8873, module 'data' -> /restore-local/data"
+    exec "$RSYNC" --daemon --no-detach --config=/tmp/rsyncd.conf
+
   copy.sh: |
     #!/bin/sh
     set -e
     . /scripts/rsync-lib.sh
     setup_rsync
 
-    # Destination is the data/ subdirectory on purpose: rsync -a wants to set times
-    # on the destination root, which is root-owned here and not ours to modify.
-    heartbeat() {
-      while true; do
-        sleep 300
-        echo "heartbeat $(date -u +%H:%M:%SZ): $(df -h /copy-target | tail -1)"
-      done
-    }
+    DEST="rsync://backup@${RSYNC_HOST}:8873/data/"
+    echo "Sending to $DEST"
 
     echo "=== PASS 1: application online, data may change during this copy ==="
-    heartbeat &
-    HB=$!
-    if run_rsync "pass1" /live-data/ /copy-target/data/; then
-      kill "$HB" 2>/dev/null || true
-    else
-      kill "$HB" 2>/dev/null || true
-      echo "FATAL: pass 1 failed after retries"
-      exit 1
-    fi
+    run_rsync "pass1" /live-data/ "$DEST"
     touch /tmp/pass1-done
     echo "PASS1_DONE"
 
@@ -80,7 +105,7 @@ data:
     done
 
     echo "=== PASS 2: maintenance mode on, incremental catch-up ==="
-    run_rsync "pass2" /live-data/ /copy-target/data/
+    run_rsync "pass2" /live-data/ "$DEST"
     echo "COPY_DONE"
 
   dbdump.sh: |
@@ -94,24 +119,16 @@ data:
       echo "FATAL: pg_dump not found at $PGDUMP"
       exit 1
     fi
+    mkdir -p /restore-local/db
+    rm -f /restore-local/db/dump.sql
     export PGPASSWORD="$password"
     echo "Dumping database..."
-    "$PGDUMP" -h "$DB_HOST" -p "$DB_PORT" -U "$username" -d "$dbname" -F c -f /dbcopy/dump.sql
+    "$PGDUMP" -h "$DB_HOST" -p "$DB_PORT" -U "$username" -d "$dbname" -F c -f /restore-local/db/dump.sql
     echo "DB dump complete."
-
-  transfer.sh: |
-    #!/bin/sh
-    set -e
-    . /scripts/rsync-lib.sh
-    setup_rsync
-    echo "Transferring to the local USB disk (app is already back online, slow is fine)..."
-    run_rsync "transfer" /fast-copy/data/ /restore-local/data/
-    echo "Transfer complete."
 
   fileprocess.sh: |
     #!/bin/sh
     set -e
-    set -o pipefail
     mkdir -p /tmp/pkgroot
     apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted zstd || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
     export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
@@ -121,8 +138,13 @@ data:
       exit 1
     fi
     ARCHIVE="/scratch/${APP_NAME}-${RUN_ID}.tar.zst"
+    rm -f /tmp/tar.ok
     echo "Compressing..."
-    tar -C /restore-local/data -cf - . | "$ZSTD" -T4 -o "$ARCHIVE"
+    ( tar -C /restore-local/data -cf - . && echo 0 > /tmp/tar.ok ) | "$ZSTD" -T4 -o "$ARCHIVE"
+    if [ "$(cat /tmp/tar.ok 2>/dev/null)" != "0" ]; then
+      echo "FATAL: tar did not finish cleanly - archive is not trustworthy."
+      exit 1
+    fi
     ARCHIVE_SIZE=$(stat -c%s "$ARCHIVE")
     echo "Archive size: ${ARCHIVE_SIZE} bytes"
     if [ "$ARCHIVE_SIZE" -lt 1048576 ]; then
@@ -139,7 +161,11 @@ data:
   dbprocess.sh: |
     #!/bin/sh
     set -e
-    DUMP_SIZE=$(stat -c%s /dbcopy/dump.sql)
+    if [ ! -f /restore-local/db/dump.sql ]; then
+      echo "FATAL: no dump file found."
+      exit 1
+    fi
+    DUMP_SIZE=$(stat -c%s /restore-local/db/dump.sql)
     echo "Dump size: ${DUMP_SIZE} bytes"
     if [ "$DUMP_SIZE" -lt 10240 ]; then
       echo "FATAL: dump suspiciously small, aborting."

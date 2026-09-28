@@ -61,11 +61,9 @@ spec:
                 - |
                   set -e
                   RUN_ID=$(date +%Y%m%d-%H%M%S)
-                  FILE_COPY_PVC="${APP_NAME}-filecopy-${RUN_ID}"
-                  DB_COPY_PVC="${APP_NAME}-dbcopy-${RUN_ID}"
+                  RECV_POD="${APP_NAME}-receiver-${RUN_ID}"
                   COPY_POD="${APP_NAME}-filecopy-${RUN_ID}"
                   DBDUMP_POD="${APP_NAME}-dbdump-${RUN_ID}"
-                  TRANSFER_POD="${APP_NAME}-transfer-${RUN_ID}"
                   FILEPROCESS_POD="${APP_NAME}-fileprocess-${RUN_ID}"
                   DBPROCESS_POD="${APP_NAME}-dbprocess-${RUN_ID}"
                   FILE_COPY_STATUS="NOT_RUN"
@@ -73,6 +71,8 @@ spec:
                   DB_DUMP_STATUS="NOT_RUN"
                   DB_PROCESS_STATUS="SKIPPED"
                   MAINTENANCE_ON="no"
+                  RECV_IP=""
+                  RSYNC_PASSWORD=""
                   export RUN_ID APP_NAME
 
                   : > /tmp/worker-output.log
@@ -87,12 +87,12 @@ spec:
                     kubectl exec -n "$NAMESPACE" deploy/"$NEXTCLOUD_DEPLOYMENT" -- su -s /bin/sh www-data -c "php occ maintenance:mode --$1"
                   }
 
-                  # Saves a pod's logs into the report attachment BEFORE deleting the pod.
+                  # Saves the last 200 log lines of each pod into the report attachment, then deletes the pod.
                   capture_and_delete() {
                     for p in "$@"; do
                       if kubectl get pod "$p" -n "$NAMESPACE" >/dev/null 2>&1; then
-                        echo "=== logs: $p ===" >> /tmp/worker-output.log
-                        kubectl logs "$p" -n "$NAMESPACE" --timestamps >> /tmp/worker-output.log 2>&1 || true
+                        echo "=== logs (last 200 lines): $p ===" >> /tmp/worker-output.log
+                        kubectl logs "$p" -n "$NAMESPACE" --timestamps --tail=200 >> /tmp/worker-output.log 2>&1 || true
                         kubectl delete pod "$p" -n "$NAMESPACE" --ignore-not-found=true
                       fi
                     done
@@ -104,12 +104,10 @@ spec:
                       log "Maintenance mode still on at exit - turning it off"
                       maintenance off || log "WARNING: could not turn maintenance mode off - check Nextcloud manually"
                     fi
-                    capture_and_delete "$COPY_POD" "$DBDUMP_POD" "$TRANSFER_POD" "$FILEPROCESS_POD" "$DBPROCESS_POD"
-                    kubectl delete pvc "$FILE_COPY_PVC" "$DB_COPY_PVC" -n "$NAMESPACE" --ignore-not-found=true --wait=false
+                    capture_and_delete "$COPY_POD" "$RECV_POD" "$DBDUMP_POD" "$FILEPROCESS_POD" "$DBPROCESS_POD"
                     export STATUS="Files: copy=${FILE_COPY_STATUS} process=${FILE_PROCESS_STATUS} | Database: dump=${DB_DUMP_STATUS} process=${DB_PROCESS_STATUS} (encryption/upload/prune not yet enabled)"
                     python3 /scripts-notify/notify.py || echo "WARNING: notification failed to send"
                   }
-                  trap cleanup EXIT
 
                   # Returns 0 when the pod reaches Succeeded, 1 on Failed or timeout (returns immediately on Failed).
                   wait_pod() {
@@ -152,31 +150,55 @@ spec:
                     return 1
                   }
 
-                  create_pvcs() {
+                  create_receiver_pod() {
                     kubectl apply -f - << EOF
                   apiVersion: v1
-                  kind: PersistentVolumeClaim
+                  kind: Pod
                   metadata:
-                    name: $FILE_COPY_PVC
+                    name: $RECV_POD
                     namespace: $NAMESPACE
+                    labels:
+                      app: backup-worker
                   spec:
-                    accessModes: ["ReadWriteOnce"]
-                    storageClassName: longhorn-canterbury-single-replica
-                    resources:
-                      requests:
-                        storage: $PVC_SIZE
-                  ---
-                  apiVersion: v1
-                  kind: PersistentVolumeClaim
-                  metadata:
-                    name: $DB_COPY_PVC
-                    namespace: $NAMESPACE
-                  spec:
-                    accessModes: ["ReadWriteOnce"]
-                    storageClassName: longhorn-canterbury-single-replica
-                    resources:
-                      requests:
-                        storage: 5Gi
+                    restartPolicy: Never
+                    nodeSelector:
+                      kubernetes.io/hostname: rhea
+                    securityContext:
+                      runAsNonRoot: true
+                      runAsUser: $WORKER_RUN_AS_USER
+                      fsGroup: $WORKER_RUN_AS_USER
+                      seccompProfile:
+                        type: RuntimeDefault
+                    containers:
+                      - name: receiver
+                        image: alpine/k8s:1.30.3
+                        securityContext:
+                          allowPrivilegeEscalation: false
+                          capabilities:
+                            drop: ["ALL"]
+                        env:
+                          - name: RSYNC_PASSWORD
+                            value: "$RSYNC_PASSWORD"
+                        command: ["/bin/sh", "/scripts/receiver.sh"]
+                        ports:
+                          - containerPort: 8873
+                        readinessProbe:
+                          tcpSocket:
+                            port: 8873
+                          periodSeconds: 5
+                        volumeMounts:
+                          - name: restore-local
+                            mountPath: /restore-local
+                          - name: scripts
+                            mountPath: /scripts
+                    volumes:
+                      - name: restore-local
+                        hostPath:
+                          path: /mnt/restore-direct
+                          type: Directory
+                      - name: scripts
+                        configMap:
+                          name: backup-pod-scripts
                   EOF
                   }
 
@@ -218,22 +240,22 @@ spec:
                           allowPrivilegeEscalation: false
                           capabilities:
                             drop: ["ALL"]
+                        env:
+                          - name: RSYNC_HOST
+                            value: "$RECV_IP"
+                          - name: RSYNC_PASSWORD
+                            value: "$RSYNC_PASSWORD"
                         command: ["/bin/sh", "/scripts/copy.sh"]
                         volumeMounts:
                           - name: live-data
                             mountPath: /live-data
                             readOnly: true
-                          - name: copy-target
-                            mountPath: /copy-target
                           - name: scripts
                             mountPath: /scripts
                     volumes:
                       - name: live-data
                         persistentVolumeClaim:
                           claimName: $PVC_NAME
-                      - name: copy-target
-                        persistentVolumeClaim:
-                          claimName: $FILE_COPY_PVC
                       - name: scripts
                         configMap:
                           name: backup-pod-scripts
@@ -251,6 +273,8 @@ spec:
                       app: backup-worker
                   spec:
                     restartPolicy: Never
+                    nodeSelector:
+                      kubernetes.io/hostname: rhea
                     securityContext:
                       runAsNonRoot: true
                       runAsUser: $WORKER_RUN_AS_USER
@@ -274,59 +298,11 @@ spec:
                             value: "$DB_PORT"
                         command: ["/bin/sh", "/scripts/dbdump.sh"]
                         volumeMounts:
-                          - name: dbcopy
-                            mountPath: /dbcopy
-                          - name: scripts
-                            mountPath: /scripts
-                    volumes:
-                      - name: dbcopy
-                        persistentVolumeClaim:
-                          claimName: $DB_COPY_PVC
-                      - name: scripts
-                        configMap:
-                          name: backup-pod-scripts
-                  EOF
-                  }
-
-                  create_transfer_pod() {
-                    kubectl apply -f - << EOF
-                  apiVersion: v1
-                  kind: Pod
-                  metadata:
-                    name: $TRANSFER_POD
-                    namespace: $NAMESPACE
-                    labels:
-                      app: backup-worker
-                  spec:
-                    restartPolicy: Never
-                    nodeSelector:
-                      kubernetes.io/hostname: rhea
-                    securityContext:
-                      runAsNonRoot: true
-                      runAsUser: $WORKER_RUN_AS_USER
-                      fsGroup: $WORKER_RUN_AS_USER
-                      seccompProfile:
-                        type: RuntimeDefault
-                    containers:
-                      - name: transfer
-                        image: alpine/k8s:1.30.3
-                        securityContext:
-                          allowPrivilegeEscalation: false
-                          capabilities:
-                            drop: ["ALL"]
-                        command: ["/bin/sh", "/scripts/transfer.sh"]
-                        volumeMounts:
-                          - name: fast-copy
-                            mountPath: /fast-copy
-                            readOnly: true
                           - name: restore-local
                             mountPath: /restore-local
                           - name: scripts
                             mountPath: /scripts
                     volumes:
-                      - name: fast-copy
-                        persistentVolumeClaim:
-                          claimName: $FILE_COPY_PVC
                       - name: restore-local
                         hostPath:
                           path: /mnt/restore-direct
@@ -403,6 +379,8 @@ spec:
                       app: backup-worker
                   spec:
                     restartPolicy: Never
+                    nodeSelector:
+                      kubernetes.io/hostname: rhea
                     securityContext:
                       runAsNonRoot: true
                       runAsUser: $WORKER_RUN_AS_USER
@@ -418,52 +396,75 @@ spec:
                             drop: ["ALL"]
                         command: ["/bin/sh", "/scripts/dbprocess.sh"]
                         volumeMounts:
-                          - name: dbcopy
-                            mountPath: /dbcopy
+                          - name: restore-local
+                            mountPath: /restore-local
+                            readOnly: true
                           - name: scripts
                             mountPath: /scripts
                     volumes:
-                      - name: dbcopy
-                        persistentVolumeClaim:
-                          claimName: $DB_COPY_PVC
+                      - name: restore-local
+                        hostPath:
+                          path: /mnt/restore-direct
+                          type: Directory
                       - name: scripts
                         configMap:
                           name: backup-pod-scripts
                   EOF
                   }
 
-                  log "Creating disposable canterbury-backed PVCs for the file copy and the DB dump..."
-                  create_pvcs
-                  kubectl wait --for=jsonpath='{.status.phase}'=Bound "pvc/$FILE_COPY_PVC" -n "$NAMESPACE" --timeout=300s
-                  kubectl wait --for=jsonpath='{.status.phase}'=Bound "pvc/$DB_COPY_PVC" -n "$NAMESPACE" --timeout=300s
+                  trap cleanup EXIT
 
-                  log "PHASE 1: file copy pass 1 (application ONLINE)"
-                  create_copy_pod
-                  if wait_file "$COPY_POD" /tmp/pass1-done 14400; then
-                    log "Pass 1 finished. PHASE 2: maintenance mode ON, pass 2 + DB dump in parallel"
-                    MAINTENANCE_ON="yes"
-                    maintenance on
-                    T_ON=$(date +%s)
-                    log "Maintenance mode ON"
-                    create_dbdump_pod
-                    SIGNALED="yes"
-                    kubectl exec -n "$NAMESPACE" "$COPY_POD" -- touch /tmp/start-pass2 || SIGNALED="no"
-                    if [ "$SIGNALED" = "yes" ] && wait_pod "$COPY_POD" 1800; then
-                      FILE_COPY_STATUS="SUCCEEDED"
+                  RSYNC_PASSWORD=$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')
+                  if [ "${#RSYNC_PASSWORD}" -lt 16 ]; then
+                    log "FATAL: could not generate a transfer password"
+                    exit 1
+                  fi
+
+                  log "Starting receiver on rhea (rsync daemon writing straight to the local USB disk - no Longhorn volume in the copy path)"
+                  create_receiver_pod
+                  if kubectl wait --for=condition=Ready "pod/$RECV_POD" -n "$NAMESPACE" --timeout=300s; then
+                    RECV_IP=$(kubectl get pod "$RECV_POD" -n "$NAMESPACE" -o jsonpath='{.status.podIP}')
+                    log "Receiver ready at $RECV_IP"
+                    log "PHASE 1: file copy pass 1 (application ONLINE)"
+                    create_copy_pod
+                    if wait_file "$COPY_POD" /tmp/pass1-done 14400; then
+                      log "Pass 1 finished. PHASE 2: maintenance mode ON, pass 2 + DB dump in parallel"
+                      MAINTENANCE_ON="yes"
+                      maintenance on
+                      T_ON=$(date +%s)
+                      log "Maintenance mode ON"
+                      create_dbdump_pod
+                      SIGNALED="yes"
+                      kubectl exec -n "$NAMESPACE" "$COPY_POD" -- touch /tmp/start-pass2 || SIGNALED="no"
+                      if [ "$SIGNALED" = "yes" ] && wait_pod "$COPY_POD" 1800; then
+                        FILE_COPY_STATUS="SUCCEEDED"
+                      else
+                        FILE_COPY_STATUS="FAILED"
+                      fi
+                      if wait_pod "$DBDUMP_POD" 1800; then
+                        DB_DUMP_STATUS="SUCCEEDED"
+                      else
+                        DB_DUMP_STATUS="FAILED"
+                      fi
+                      maintenance off
+                      MAINTENANCE_ON="no"
+                      log "Maintenance mode OFF - window was $(( $(date +%s) - T_ON ))s"
+                      capture_and_delete "$COPY_POD" "$RECV_POD"
                     else
                       FILE_COPY_STATUS="FAILED"
+                      log "Pass 1 failed - skipping maintenance mode (nothing to coordinate), dumping the DB on its own"
+                      capture_and_delete "$COPY_POD" "$RECV_POD"
+                      create_dbdump_pod
+                      if wait_pod "$DBDUMP_POD" 1800; then
+                        DB_DUMP_STATUS="SUCCEEDED"
+                      else
+                        DB_DUMP_STATUS="FAILED"
+                      fi
                     fi
-                    if wait_pod "$DBDUMP_POD" 1800; then
-                      DB_DUMP_STATUS="SUCCEEDED"
-                    else
-                      DB_DUMP_STATUS="FAILED"
-                    fi
-                    maintenance off
-                    MAINTENANCE_ON="no"
-                    log "Maintenance mode OFF - window was $(( $(date +%s) - T_ON ))s"
                   else
                     FILE_COPY_STATUS="FAILED"
-                    log "Pass 1 failed - skipping maintenance mode (nothing to coordinate), dumping the DB on its own"
+                    log "Receiver did not become ready - skipping the file copy, dumping the DB on its own"
+                    capture_and_delete "$RECV_POD"
                     create_dbdump_pod
                     if wait_pod "$DBDUMP_POD" 1800; then
                       DB_DUMP_STATUS="SUCCEEDED"
@@ -485,23 +486,14 @@ spec:
                   fi
 
                   if [ "$FILE_COPY_STATUS" = "SUCCEEDED" ]; then
-                    capture_and_delete "$COPY_POD"
-                    log "PHASE 3: transferring the copy to rhea's USB disk (app is back online, slow is fine)"
-                    create_transfer_pod
-                    if wait_pod "$TRANSFER_POD" 14400; then
-                      capture_and_delete "$TRANSFER_POD"
-                      kubectl delete pvc "$FILE_COPY_PVC" -n "$NAMESPACE" --ignore-not-found=true --wait=false
-                      log "PHASE 4: compress and verify"
-                      create_fileprocess_pod
-                      if wait_pod "$FILEPROCESS_POD" 28800; then
-                        FILE_PROCESS_STATUS="SUCCEEDED"
-                      else
-                        FILE_PROCESS_STATUS="FAILED"
-                      fi
-                      capture_and_delete "$FILEPROCESS_POD"
+                    log "PHASE 3: compress and verify from the local copy on rhea"
+                    create_fileprocess_pod
+                    if wait_pod "$FILEPROCESS_POD" 28800; then
+                      FILE_PROCESS_STATUS="SUCCEEDED"
                     else
-                      FILE_PROCESS_STATUS="FAILED_AT_TRANSFER"
+                      FILE_PROCESS_STATUS="FAILED"
                     fi
+                    capture_and_delete "$FILEPROCESS_POD"
                   fi
                   log "Backup run $RUN_ID finished"
           volumes:
