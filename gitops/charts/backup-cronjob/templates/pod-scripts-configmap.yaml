@@ -1,0 +1,149 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-pod-scripts
+  namespace: {{ .Values.namespace }}
+data:
+  rsync-lib.sh: |
+    # Sourced by copy.sh and transfer.sh (not executed directly).
+    setup_rsync() {
+      mkdir -p /tmp/pkgroot
+      apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted rsync || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
+      export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
+      RSYNC="/tmp/pkgroot/usr/bin/rsync"
+      if [ ! -x "$RSYNC" ]; then
+        echo "FATAL: rsync not found at $RSYNC after install"
+        exit 1
+      fi
+    }
+
+    # run_rsync LABEL SRC DST — retries up to 3 times (rsync resumes where it stopped).
+    # Exit 24 (files vanished mid-copy) is expected while the app is online and is accepted.
+    run_rsync() {
+      label="$1"
+      src="$2"
+      dst="$3"
+      attempt=0
+      while true; do
+        "$RSYNC" -a --delete --exclude=/lost+found --stats "$src" "$dst" && return 0
+        rc=$?
+        if [ "$rc" -eq 24 ]; then
+          echo "$label: rsync exit 24 (files vanished during copy) - acceptable"
+          return 0
+        fi
+        attempt=$((attempt + 1))
+        echo "$label: rsync failed with exit $rc (attempt $attempt of 3)"
+        if [ "$attempt" -ge 3 ]; then
+          return 1
+        fi
+        sleep 30
+      done
+    }
+
+  copy.sh: |
+    #!/bin/sh
+    set -e
+    . /scripts/rsync-lib.sh
+    setup_rsync
+
+    # Destination is the data/ subdirectory on purpose: rsync -a wants to set times
+    # on the destination root, which is root-owned here and not ours to modify.
+    heartbeat() {
+      while true; do
+        sleep 300
+        echo "heartbeat $(date -u +%H:%M:%SZ): $(df -h /copy-target | tail -1)"
+      done
+    }
+
+    echo "=== PASS 1: application online, data may change during this copy ==="
+    heartbeat &
+    HB=$!
+    if run_rsync "pass1" /live-data/ /copy-target/data/; then
+      kill "$HB" 2>/dev/null || true
+    else
+      kill "$HB" 2>/dev/null || true
+      echo "FATAL: pass 1 failed after retries"
+      exit 1
+    fi
+    touch /tmp/pass1-done
+    echo "PASS1_DONE"
+
+    echo "Waiting for the orchestrator's go-ahead (maintenance mode on) for pass 2..."
+    waited=0
+    while [ ! -f /tmp/start-pass2 ]; do
+      sleep 2
+      waited=$((waited + 2))
+      if [ "$waited" -ge 7200 ]; then
+        echo "FATAL: no go-ahead within 2h, giving up"
+        exit 1
+      fi
+    done
+
+    echo "=== PASS 2: maintenance mode on, incremental catch-up ==="
+    run_rsync "pass2" /live-data/ /copy-target/data/
+    echo "COPY_DONE"
+
+  dbdump.sh: |
+    #!/bin/sh
+    set -e
+    mkdir -p /tmp/pkgroot
+    apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted --repository https://dl-cdn.alpinelinux.org/alpine/edge/main postgresql18-client || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
+    export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
+    PGDUMP="/tmp/pkgroot/usr/libexec/postgresql18/pg_dump"
+    if [ ! -x "$PGDUMP" ]; then
+      echo "FATAL: pg_dump not found at $PGDUMP"
+      exit 1
+    fi
+    export PGPASSWORD="$password"
+    echo "Dumping database..."
+    "$PGDUMP" -h "$DB_HOST" -p "$DB_PORT" -U "$username" -d "$dbname" -F c -f /dbcopy/dump.sql
+    echo "DB dump complete."
+
+  transfer.sh: |
+    #!/bin/sh
+    set -e
+    . /scripts/rsync-lib.sh
+    setup_rsync
+    echo "Transferring to the local USB disk (app is already back online, slow is fine)..."
+    run_rsync "transfer" /fast-copy/data/ /restore-local/data/
+    echo "Transfer complete."
+
+  fileprocess.sh: |
+    #!/bin/sh
+    set -e
+    set -o pipefail
+    mkdir -p /tmp/pkgroot
+    apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted zstd || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
+    export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
+    ZSTD="/tmp/pkgroot/usr/bin/zstd"
+    if [ ! -x "$ZSTD" ]; then
+      echo "FATAL: zstd not found at $ZSTD"
+      exit 1
+    fi
+    ARCHIVE="/scratch/${APP_NAME}-${RUN_ID}.tar.zst"
+    echo "Compressing..."
+    tar -C /restore-local/data -cf - . | "$ZSTD" -T4 -o "$ARCHIVE"
+    ARCHIVE_SIZE=$(stat -c%s "$ARCHIVE")
+    echo "Archive size: ${ARCHIVE_SIZE} bytes"
+    if [ "$ARCHIVE_SIZE" -lt 1048576 ]; then
+      echo "FATAL: archive suspiciously small, aborting."
+      exit 1
+    fi
+    if ! "$ZSTD" -t "$ARCHIVE"; then
+      echo "FATAL: zstd integrity check failed."
+      exit 1
+    fi
+    echo "=== STOPPING HERE: encryption, key storage, upload and prune are not enabled in this test phase ==="
+    echo "File processing complete."
+
+  dbprocess.sh: |
+    #!/bin/sh
+    set -e
+    DUMP_SIZE=$(stat -c%s /dbcopy/dump.sql)
+    echo "Dump size: ${DUMP_SIZE} bytes"
+    if [ "$DUMP_SIZE" -lt 10240 ]; then
+      echo "FATAL: dump suspiciously small, aborting."
+      exit 1
+    fi
+    echo "=== STOPPING HERE: encryption, key storage, upload and prune are not enabled in this test phase ==="
+    echo "DB processing complete."
