@@ -1,0 +1,23 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.appName }}-backup-longhorn-read
+  namespace: longhorn-system
+rules:
+  - apiGroups: ["longhorn.io"]
+    resources: ["volumes", "replicas"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.appName }}-backup-longhorn-read
+  namespace: longhorn-system
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.appName }}-backup
+    namespace: {{ .Values.namespace }}
+roleRef:
+  kind: Role
+  name: {{ .Values.appName }}-backup-longhorn-read
+  apiGroup: rbac.authorization.k8s.io
