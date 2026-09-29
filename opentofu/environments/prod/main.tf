@@ -85,7 +85,6 @@ module "mimas" {
 
   disks = [
     { datastore_id = "razorback", size = 300, interface = "scsi0" },
-    { datastore_id = "canterbury", size = 900, interface = "scsi1" },
     { datastore_id = "tachi", size = 100, interface = "scsi2" },
   ]
 
@@ -96,6 +95,38 @@ module "mimas" {
     { bridge = "vmbr3", address = "10.10.40.42/24" },
     { bridge = "vmbr4", address = "10.10.50.42/24", gateway = "10.10.50.1" },
   ]
+}
+
+# Direct passthrough of the three former canterbury physical disks to mimas,
+# bypassing ZFS/zvol entirely — Longhorn's own documented architecture expects
+# direct-attached storage, and real, repeated replica-ejection incidents
+# (2026-09-27/28) correlated with ZFS sync-write queue latency on this tier.
+# See ADR-0005 addendum. Uses null_resource + qm set since the Terraform
+# provider's disk block is built for datastore-backed disks, not raw device
+# passthrough — same pattern as the ZFS pool creation in bootstrap-storage.
+resource "null_resource" "mimas_canterbury_passthrough" {
+  triggers = {
+    disk_c = "ata-Patriot_P210_1024GB_P210IICB25082903441"
+    disk_d = "ata-VK0480GDJXV_PHWL52650138480QGN"
+    disk_e = "ata-VK0480GDJXV_PHWL505401K1480QGN"
+  }
+
+  connection {
+    type  = "ssh"
+    host  = "eros.belt.solsys.dev"
+    user  = "root"
+    agent = true
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "qm config 202 | grep -q '^scsi3:' || qm set 202 --scsi3 /dev/disk/by-id/ata-Patriot_P210_1024GB_P210IICB25082903441",
+      "qm config 202 | grep -q '^scsi4:' || qm set 202 --scsi4 /dev/disk/by-id/ata-VK0480GDJXV_PHWL52650138480QGN",
+      "qm config 202 | grep -q '^scsi5:' || qm set 202 --scsi5 /dev/disk/by-id/ata-VK0480GDJXV_PHWL505401K1480QGN"
+    ]
+  }
+
+  depends_on = [module.mimas]
 }
 
 # ============================================================================
