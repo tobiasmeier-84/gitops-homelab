@@ -58,7 +58,7 @@ resource "proxmox_virtual_environment_vm" "this" {
   }
 
   dynamic "disk" {
-    for_each = { for d in var.disks : d.interface => d }
+    for_each = { for idx, d in var.disks : idx => d }
     content {
       datastore_id = disk.value.datastore_id
       size         = disk.value.size
