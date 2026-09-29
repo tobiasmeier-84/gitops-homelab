@@ -18,6 +18,7 @@ spec:
         storageClassName: longhorn-bulk
         schedule: "0 0 * * *"
         workerRunAsUser: 33
+        rsyncBwlimitKBps: 20000
   destination:
     server: https://kubernetes.default.svc
     namespace: rocinante

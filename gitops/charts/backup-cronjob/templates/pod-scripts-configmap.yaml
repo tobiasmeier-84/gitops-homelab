@@ -27,7 +27,14 @@ data:
       attempt=0
       while true; do
         rc=0
-        "$RSYNC" -a --delete --exclude=/lost+found --stats --timeout=300 --contimeout=30 "$src" "$dst" || rc=$?
+        # RSYNC_BWLIMIT (KB/s) is a real mitigation, not a diagnosed fix - the actual
+        # root cause of replica ejections under bulk writes is still not fully
+        # understood (see ADR-0005 addendum, 2026-09-28). Set to "0" to disable.
+        BWLIMIT_ARG=""
+        if [ -n "$RSYNC_BWLIMIT" ] && [ "$RSYNC_BWLIMIT" != "0" ]; then
+          BWLIMIT_ARG="--bwlimit=$RSYNC_BWLIMIT"
+        fi
+        "$RSYNC" -a --delete --exclude=/lost+found --stats --timeout=300 --contimeout=30 $BWLIMIT_ARG "$src" "$dst" || rc=$?
         case "$rc" in
           0|24)
             return 0

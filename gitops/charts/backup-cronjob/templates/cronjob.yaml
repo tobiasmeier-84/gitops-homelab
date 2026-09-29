@@ -14,6 +14,12 @@ spec:
         spec:
           serviceAccountName: {{ .Values.appName }}-backup
           restartPolicy: Never
+          # Long enough for the SIGTERM trap's cleanup() to run in full
+          # (turn off maintenance mode, capture logs, delete child pods)
+          # if the job is deleted manually mid-run - confirmed necessary
+          # 2026-09-28: with the default 30s grace, cleanup never ran and
+          # both worker pods + maintenance mode were left dangling.
+          terminationGracePeriodSeconds: 120
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -110,9 +116,13 @@ spec:
                   }
 
                   # Returns 0 when the pod reaches Succeeded, 1 on Failed or timeout (returns immediately on Failed).
+                  # Set guard="yes" as the 3rd argument to also kill the pod immediately if a
+                  # live replica leaves RW during the wait (used for the copy pod in pass 2;
+                  # skipped for DB dump / compress pods, which don't write to the live volume).
                   wait_pod() {
                     pod_name="$1"
                     timeout_s="$2"
+                    guard="${3:-no}"
                     elapsed=0
                     while [ "$elapsed" -lt "$timeout_s" ]; do
                       phase=$(kubectl get pod "$pod_name" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
@@ -120,6 +130,11 @@ spec:
                         return 0
                       fi
                       if [ "$phase" = "Failed" ]; then
+                        return 1
+                      fi
+                      if [ "$guard" = "yes" ] && ! check_replica_health; then
+                        log "GUARD TRIPPED: a live replica is not RW - killing $pod_name immediately to stop the write load"
+                        kubectl delete pod "$pod_name" -n "$NAMESPACE" --ignore-not-found=true --force --grace-period=0
                         return 1
                       fi
                       sleep 10
@@ -140,6 +155,11 @@ spec:
                       if [ "$phase" = "Failed" ] || [ "$phase" = "Succeeded" ]; then
                         return 1
                       fi
+                      if ! check_replica_health; then
+                        log "GUARD TRIPPED: a live replica is not RW - killing $pod_name immediately to stop the write load"
+                        kubectl delete pod "$pod_name" -n "$NAMESPACE" --ignore-not-found=true --force --grace-period=0
+                        return 1
+                      fi
                       if kubectl exec -n "$NAMESPACE" "$pod_name" -- test -f "$path" >/dev/null 2>&1; then
                         return 0
                       fi
@@ -148,6 +168,24 @@ spec:
                     done
                     echo "wait_file: timed out after ${timeout_s}s waiting for $path in $pod_name"
                     return 1
+                  }
+
+                  # Returns 0 if every current replica of the live volume is RW, 1 otherwise
+                  # (a replica in WO means an active rebuild is in progress - exactly the
+                  # condition that has repeatedly ejected replicas under sustained writes).
+                  # Missing replicas (fewer than desired) are NOT treated as unhealthy here -
+                  # we deliberately run with 2/3 replicas while mimas's disk stays excluded.
+                  check_replica_health() {
+                    modes=$(kubectl get engines.longhorn.io -n longhorn-system -l longhornvolume="$LONGHORN_VOLUME" -o jsonpath='{.items[0].status.replicaModeMap}' 2>/dev/null)
+                    if [ -z "$modes" ]; then
+                      echo "check_replica_health: could not read replica status - treating as unhealthy (fail safe)"
+                      return 1
+                    fi
+                    if echo "$modes" | grep -qE '"(WO|ERR)"'; then
+                      echo "check_replica_health: a replica is not RW - $modes"
+                      return 1
+                    fi
+                    return 0
                   }
 
                   create_receiver_pod() {
@@ -245,6 +283,8 @@ spec:
                             value: "$RECV_IP"
                           - name: RSYNC_PASSWORD
                             value: "$RSYNC_PASSWORD"
+                          - name: RSYNC_BWLIMIT
+                            value: "{{ .Values.rsyncBwlimitKBps | default 20000 }}"
                         command: ["/bin/sh", "/scripts/copy.sh"]
                         volumeMounts:
                           - name: live-data
@@ -413,6 +453,10 @@ spec:
                   }
 
                   trap cleanup EXIT
+                  trap 'exit 143' TERM INT
+
+                  LONGHORN_VOLUME=$(kubectl get pvc "$PVC_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.volumeName}')
+                  log "Live Longhorn volume identified as $LONGHORN_VOLUME (for replica-health guard)"
 
                   RSYNC_PASSWORD=$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')
                   if [ "${#RSYNC_PASSWORD}" -lt 16 ]; then
@@ -436,7 +480,7 @@ spec:
                       create_dbdump_pod
                       SIGNALED="yes"
                       kubectl exec -n "$NAMESPACE" "$COPY_POD" -- touch /tmp/start-pass2 || SIGNALED="no"
-                      if [ "$SIGNALED" = "yes" ] && wait_pod "$COPY_POD" 1800; then
+                      if [ "$SIGNALED" = "yes" ] && wait_pod "$COPY_POD" 1800 "yes"; then
                         FILE_COPY_STATUS="SUCCEEDED"
                       else
                         FILE_COPY_STATUS="FAILED"
