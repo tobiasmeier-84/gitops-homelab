@@ -174,6 +174,100 @@
     state: mounted
   when: inventory_hostname == "rhea"
 
+# ============================================================================
+# mimas canterbury-replacement (mimas only): three raw-passthrough physical
+# disks (scsi3/4/5), replacing the old zvol-backed canterbury entirely.
+# Real, repeated replica-ejection incidents (2026-09-27/28) correlated with
+# ZFS sync-write queue latency on the old zvol; this removes that layer,
+# testing Longhorn's own documented, recommended direct-attached-storage
+# architecture. Registered directly (Node CR patch, not the bootstrap
+# annotation) since mimas was already bootstrapped weeks ago with the old
+# canterbury — the bootstrap mechanism only fires once, ever, at initial
+# setup (confirmed 2026-09-24). All three tagged "bulk", matching the old
+# canterbury tag, so the existing StorageClass keeps working unchanged.
+# See ADR-0005 addendum, 2026-09-29.
+# ============================================================================
+
+- name: Identify mimas canterbury-replacement disk 1 (Patriot, ~954GB)
+  set_fact:
+    mimas_cant1_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi3"
+  when: inventory_hostname == "mimas"
+
+- name: Identify mimas canterbury-replacement disk 2 (~447GB)
+  set_fact:
+    mimas_cant2_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi4"
+  when: inventory_hostname == "mimas"
+
+- name: Identify mimas canterbury-replacement disk 3 (~447GB)
+  set_fact:
+    mimas_cant3_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi5"
+  when: inventory_hostname == "mimas"
+
+- name: Format mimas canterbury-replacement disks with ext4
+  filesystem:
+    fstype: ext4
+    dev: "{{ item }}"
+  loop:
+    - "{{ mimas_cant1_device | default('') }}"
+    - "{{ mimas_cant2_device | default('') }}"
+    - "{{ mimas_cant3_device | default('') }}"
+  when: inventory_hostname == "mimas"
+
+- name: Get UUIDs of mimas canterbury-replacement disks
+  command: "blkid -s UUID -o value {{ item }}"
+  register: mimas_cant_uuid_results
+  changed_when: false
+  loop:
+    - "{{ mimas_cant1_device | default('') }}"
+    - "{{ mimas_cant2_device | default('') }}"
+    - "{{ mimas_cant3_device | default('') }}"
+  when: inventory_hostname == "mimas"
+
+- name: Create mount points for mimas canterbury-replacement disks
+  file:
+    path: "/mnt/longhorn/canterbury-{{ item }}"
+    state: directory
+    mode: '0755'
+  loop: ["1", "2", "3"]
+  when: inventory_hostname == "mimas"
+
+- name: Mount mimas canterbury-replacement disks persistently (by UUID)
+  mount:
+    path: "/mnt/longhorn/canterbury-{{ item.0 }}"
+    src: "UUID={{ item.1.stdout }}"
+    fstype: ext4
+    state: mounted
+  loop: "{{ ['1', '2', '3'] | zip(mimas_cant_uuid_results.results | default([])) | list }}"
+  when: inventory_hostname == "mimas"
+
+- name: Register mimas canterbury-replacement disks with Longhorn directly (Node CR patch — mimas was already bootstrapped, so the one-time annotation won't fire again)
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    kind: Node
+    api_version: longhorn.io/v1beta2
+    name: mimas
+    namespace: longhorn-system
+    state: patched
+    definition:
+      spec:
+        disks:
+          canterbury-1:
+            path: /mnt/longhorn/canterbury-1
+            allowScheduling: true
+            tags:
+              - bulk
+          canterbury-2:
+            path: /mnt/longhorn/canterbury-2
+            allowScheduling: true
+            tags:
+              - bulk
+          canterbury-3:
+            path: /mnt/longhorn/canterbury-3
+            allowScheduling: true
+            tags:
+              - bulk
+  when: inventory_hostname == "mimas"
+
 - name: Set correct ownership for backup worker (UID/GID 33, matches Rocinante's workerRunAsUser)
   file:
     path: /mnt/scratch-direct
@@ -226,3 +320,18 @@
     group: "33"
     mode: '0755'
   when: inventory_hostname == "rhea"
+
+- name: Remove mimas's old canterbury disk registration from Longhorn (the physical zvol no longer exists — replaced by canterbury-1/2/3)
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    kind: Node
+    api_version: longhorn.io/v1beta2
+    name: mimas
+    namespace: longhorn-system
+    state: patched
+    merge_type: json
+    definition:
+      - op: remove
+        path: /spec/disks/default-disk-38e74521215e511a
+  when: inventory_hostname == "mimas"
+  ignore_errors: true
