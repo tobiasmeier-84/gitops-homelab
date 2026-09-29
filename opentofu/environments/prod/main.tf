@@ -83,6 +83,18 @@ module "mimas" {
   image_file_id  = proxmox_download_file.debian_eros.id
   ssh_public_key = var.vm_ssh_public_key
 
+  # NOTE: canterbury (zvol-backed) was removed from this list on 2026-09-29,
+  # replaced with three raw-disk-passthrough SCSI devices (scsi3/4/5) applied
+  # directly via `qm set` on eros, NOT managed by this Terraform config.
+  # KNOWN, DELIBERATE STATE DRIFT: Terraform's state still has `tachi` at
+  # list-index 2 (from when canterbury occupied index 1); removing canterbury
+  # from this list shifts tachi to index 1, and because the proxmox-vm
+  # module's disk for_each keys by list position, ANY `tofu apply` touching
+  # this module will show a plan to destroy+recreate tachi's disk block —
+  # which holds a LIVE replica of Barbapiccola's database. DO NOT APPLY
+  # changes to module.mimas until this is resolved via `moved` blocks or
+  # careful `tofu state mv` surgery, done deliberately with time to verify.
+  # See ADR-0005 addendum, 2026-09-29.
   disks = [
     { datastore_id = "razorback", size = 300, interface = "scsi0" },
     { datastore_id = "tachi", size = 100, interface = "scsi2" },
