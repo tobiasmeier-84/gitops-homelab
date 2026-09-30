@@ -16,11 +16,22 @@
   register: lsblk_output
   changed_when: false
 
-- name: Identify tachi device (fast/DB-tier disk, ~100GB)
+# rhea's tachi disk was migrated to direct-attach passthrough on 2026-09-30
+# (scsi6, ~500GB NVMe) — too large to match the original size-based
+# detection (90-110GB), which still applies to enceladus/mimas's original,
+# untouched zvol-backed tachi disks. Reuses the same /mnt/longhorn/tachi
+# mount path for consistency, since the old zvol disk there is gone.
+- name: Identify tachi device (fast/DB-tier disk, ~100GB) — enceladus/mimas only, original zvol-backed disk
   shell: |
     echo "{{ lsblk_output.stdout }}" | awk '$2 > 90000000000 && $2 < 110000000000 {print "/dev/"$1}'
   register: tachi_device_result
   changed_when: false
+  when: inventory_hostname != "rhea"
+
+- name: Identify tachi device — rhea only, direct-attach passthrough (scsi6)
+  set_fact:
+    tachi_device_result: {"stdout": "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi6"}
+  when: inventory_hostname == "rhea"
 
 - name: Set tachi device fact
   set_fact:
