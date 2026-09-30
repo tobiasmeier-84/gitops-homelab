@@ -20,7 +20,7 @@ resource "proxmox_virtual_environment_vm" "iapetus" {
   }
 
   disk {
-    datastore_id = "canterbury"
+    datastore_id = "razorback"
     size         = 40
     interface    = "scsi0"
     import_from = proxmox_download_file.debian_cloud_image.id
@@ -45,7 +45,7 @@ resource "proxmox_virtual_environment_vm" "iapetus" {
   }]
 
   initialization {
-    datastore_id = "canterbury"
+    datastore_id = "razorback"
     ip_config {
       ipv4 {
         address = "10.10.10.24/24"
