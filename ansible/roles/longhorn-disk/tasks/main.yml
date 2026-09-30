@@ -60,13 +60,11 @@
 
 # ============================================================================
 # LEGACY canterbury (zvol-backed, enceladus ONLY): unchanged since original
-# setup. Tagged "bulk" — legacy tag, kept for backward compatibility during
-# the ongoing migration. Real, repeated replica-ejection incidents
-# (2026-09-27/28) traced to this exact zvol-on-Patriot-adjacent-pool
-# architecture on mimas and rhea; both have since been migrated to direct
-# raw-disk passthrough (see below). Enceladus's migration is pending —
-# once done, this whole section will be removed and enceladus will use the
-# same canterbury-replacement pattern as mimas/rhea.
+# setup. Tagged "bulk" — legacy tag, kept during the ongoing migration.
+# Real, repeated replica-ejection incidents (2026-09-27/28) traced to this
+# exact zvol-on-Patriot-adjacent-pool architecture on mimas and rhea; both
+# have since been migrated to direct raw-disk passthrough (see below).
+# Enceladus's migration is pending.
 # ============================================================================
 
 - name: Identify canterbury device (legacy zvol, ~900GB) — enceladus only
@@ -132,39 +130,39 @@
 
 # ============================================================================
 # canterbury-replacement, direct raw-disk passthrough (mimas + rhea):
-# three separate physical disks each, replacing the old single zvol-backed
-# canterbury. Removes ZFS/zvol from Longhorn's data path entirely — real,
-# controlled testing (2026-09-29/30) showed a rebuild on this architecture
-# completed successfully with ZERO ejections over ~4 hours on mimas, while
-# the same volume's replica on rhea's still-zvol-backed disk ejected and
-# restarted repeatedly under identical real conditions in the same window
-# — a clean, direct A/B confirmation of root cause. See ADR-0005 addendum,
-# 2026-09-29/30.
+# three separate physical disks each. Removes ZFS/zvol from Longhorn's
+# data path — real, controlled testing (2026-09-29/30) showed a rebuild on
+# this architecture completed with ZERO ejections over ~4 hours on mimas,
+# while the same volume's replica on rhea's still-zvol-backed disk ejected
+# repeatedly under identical conditions in the same window. See ADR-0005
+# addendum, 2026-09-29/30.
 #
-# Three-tier scheme: the Patriot (scsi3, genuinely slow — real, measured
-# write latency of 300-675ms at low queue depth) is tagged "slow"; the two
-# healthy VK0480 disks (scsi4/scsi5) are tagged "general". Registered
-# directly via Node CR patch, not the bootstrap annotation, since both
-# nodes were already bootstrapped previously — that mechanism only fires
-# once, ever, at a node's initial setup (confirmed 2026-09-24).
+# MIMAS already has LIVE DATA on its disks (mounted as canterbury-1/2/3,
+# provisioned 2026-09-29) — this task set only updates its Longhorn TAGS,
+# never touches its mount/format (that would destroy the live replica).
+# RHEA's disks are brand new/empty (migrated 2026-09-30) — provisioned
+# fresh with the cleaner ct-slow/ct-general-1/ct-general-2 naming.
+#
+# Three-tier scheme: Patriot = "slow" tag (real, measured write latency of
+# 300-675ms at low queue depth); the two healthy VK0480 disks = "general".
 # ============================================================================
 
-- name: Identify canterbury-replacement disk 1 (Patriot, "slow" tier)
+- name: Identify canterbury-replacement disk 1 (Patriot, "slow" tier) — rhea only, fresh provisioning
   set_fact:
     ct_slow_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi3"
-  when: inventory_hostname in ["mimas", "rhea"]
+  when: inventory_hostname == "rhea"
 
-- name: Identify canterbury-replacement disk 2 ("general" tier)
+- name: Identify canterbury-replacement disk 2 ("general" tier) — rhea only, fresh provisioning
   set_fact:
     ct_general1_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi4"
-  when: inventory_hostname in ["mimas", "rhea"]
+  when: inventory_hostname == "rhea"
 
-- name: Identify canterbury-replacement disk 3 ("general" tier)
+- name: Identify canterbury-replacement disk 3 ("general" tier) — rhea only, fresh provisioning
   set_fact:
     ct_general2_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi5"
-  when: inventory_hostname in ["mimas", "rhea"]
+  when: inventory_hostname == "rhea"
 
-- name: Format canterbury-replacement disks with ext4 (idempotent — skips already-formatted disks)
+- name: Format canterbury-replacement disks with ext4 — rhea only
   filesystem:
     fstype: ext4
     dev: "{{ item }}"
@@ -172,9 +170,9 @@
     - "{{ ct_slow_device | default('') }}"
     - "{{ ct_general1_device | default('') }}"
     - "{{ ct_general2_device | default('') }}"
-  when: inventory_hostname in ["mimas", "rhea"]
+  when: inventory_hostname == "rhea"
 
-- name: Get UUIDs of canterbury-replacement disks
+- name: Get UUIDs of canterbury-replacement disks — rhea only
   command: "blkid -s UUID -o value {{ item }}"
   register: ct_uuid_results
   changed_when: false
@@ -182,31 +180,31 @@
     - "{{ ct_slow_device | default('') }}"
     - "{{ ct_general1_device | default('') }}"
     - "{{ ct_general2_device | default('') }}"
-  when: inventory_hostname in ["mimas", "rhea"]
+  when: inventory_hostname == "rhea"
 
-- name: Create mount points for canterbury-replacement disks
+- name: Create mount points for canterbury-replacement disks — rhea only
   file:
     path: "/mnt/longhorn/{{ item }}"
     state: directory
     mode: '0755'
   loop: ["ct-slow", "ct-general-1", "ct-general-2"]
-  when: inventory_hostname in ["mimas", "rhea"]
+  when: inventory_hostname == "rhea"
 
-- name: Mount canterbury-replacement disks persistently (by UUID)
+- name: Mount canterbury-replacement disks persistently (by UUID) — rhea only
   mount:
     path: "/mnt/longhorn/{{ item.0 }}"
     src: "UUID={{ item.1.stdout }}"
     fstype: ext4
     state: mounted
   loop: "{{ ['ct-slow', 'ct-general-1', 'ct-general-2'] | zip(ct_uuid_results.results | default([])) | list }}"
-  when: inventory_hostname in ["mimas", "rhea"]
+  when: inventory_hostname == "rhea"
 
-- name: Register canterbury-replacement disks with Longhorn directly (Node CR patch — these nodes were already bootstrapped, so the one-time annotation won't fire again)
+- name: Register rhea's canterbury-replacement disks with Longhorn directly (Node CR patch — rhea was already bootstrapped, so the one-time annotation won't fire again)
   kubernetes.core.k8s:
     kubeconfig: /etc/rancher/rke2/rke2.yaml
     kind: Node
     api_version: longhorn.io/v1beta2
-    name: "{{ inventory_hostname }}"
+    name: rhea
     namespace: longhorn-system
     state: patched
     definition:
@@ -227,20 +225,32 @@
             allowScheduling: true
             tags:
               - general
-  when: inventory_hostname in ["mimas", "rhea"]
+  when: inventory_hostname == "rhea"
 
-- name: Remove mimas/rhea's old canterbury-1/2/3 disk registrations if present (renamed to ct-slow/ct-general-1/ct-general-2 for consistency across both migrated nodes)
+- name: Update mimas's EXISTING canterbury-1/2/3 disk tags only (NOT touching mount/format — these disks hold LIVE replica data provisioned 2026-09-29, only the Longhorn tag metadata changes, from generic "bulk" to the proper tier tags)
   kubernetes.core.k8s:
     kubeconfig: /etc/rancher/rke2/rke2.yaml
     kind: Node
     api_version: longhorn.io/v1beta2
-    name: "{{ inventory_hostname }}"
+    name: mimas
     namespace: longhorn-system
     state: patched
-    merge_type: json
     definition:
-      - op: remove
-        path: "/spec/disks/canterbury-{{ item }}"
-  loop: ["1", "2", "3"]
+      spec:
+        disks:
+          canterbury-1:
+            path: /mnt/longhorn/canterbury-1
+            allowScheduling: true
+            tags:
+              - slow
+          canterbury-2:
+            path: /mnt/longhorn/canterbury-2
+            allowScheduling: true
+            tags:
+              - general
+          canterbury-3:
+            path: /mnt/longhorn/canterbury-3
+            allowScheduling: true
+            tags:
+              - general
   when: inventory_hostname == "mimas"
-  ignore_errors: true
