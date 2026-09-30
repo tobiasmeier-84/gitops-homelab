@@ -161,10 +161,10 @@ module "rhea" {
 
   disks = [
     { datastore_id = "razorback", size = 300, interface = "scsi0" },
-    { datastore_id = "canterbury", size = 900, interface = "scsi1" },
-    { datastore_id = "tachi", size = 100, interface = "scsi2" },
-    { datastore_id = "scratch-usb", size = 7000, interface = "scsi3" }, # Backup pipeline scratch, isolated from canterbury
-    { datastore_id = "scratch-usb", size = 7000, interface = "scsi4" }, # Backup pipeline restore target — dedicated single-node disk, see ADR-0005 addendum on cross-node Longhorn attach failures
+    { datastore_id = "", interface = "scsi3", path_in_datastore = "/dev/disk/by-id/ata-Patriot_P210_1024GB_P210ZICB25080800055", size = 953 }, # Direct passthrough, "slow" Longhorn tier — see ADR-0005 addendum
+    { datastore_id = "", interface = "scsi4", path_in_datastore = "/dev/disk/by-id/wwn-0x55cd2e404c4d826c", size = 447 }, # Direct passthrough, "general" Longhorn tier
+    { datastore_id = "", interface = "scsi5", path_in_datastore = "/dev/disk/by-id/wwn-0x55cd2e404c58ccec", size = 447 }, # Direct passthrough, "general" Longhorn tier
+    { datastore_id = "", interface = "scsi6", path_in_datastore = "/dev/disk/by-id/nvme-SAMSUNG_MZVLB512HAJQ-000H1_S3WTNX0M151107", size = 476 }, # Direct passthrough, "fast" Longhorn tier (former tachi)
   ]
 
   network_interfaces = [

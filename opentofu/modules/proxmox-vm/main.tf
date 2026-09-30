@@ -64,6 +64,7 @@ resource "proxmox_virtual_environment_vm" "this" {
       size              = try(disk.value.size, null)
       interface         = disk.value.interface
       path_in_datastore = try(disk.value.path_in_datastore, null)
+      file_format       = disk.value.datastore_id == "" ? null : "raw"
       import_from       = disk.value.interface == "scsi0" ? var.image_file_id : null
     }
   }
