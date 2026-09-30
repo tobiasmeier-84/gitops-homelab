@@ -58,12 +58,13 @@ resource "proxmox_virtual_environment_vm" "this" {
   }
 
   dynamic "disk" {
-    for_each = { for idx, d in var.disks : idx => d }
+    for_each = { for d in var.disks : d.interface => d }
     content {
-      datastore_id = disk.value.datastore_id
-      size         = disk.value.size
-      interface    = disk.value.interface
-      import_from = disk.key == "0" ? var.image_file_id : null
+      datastore_id      = disk.value.datastore_id
+      size              = try(disk.value.size, null)
+      interface         = disk.value.interface
+      path_in_datastore = try(disk.value.path_in_datastore, null)
+      import_from       = disk.value.interface == "scsi0" ? var.image_file_id : null
     }
   }
 

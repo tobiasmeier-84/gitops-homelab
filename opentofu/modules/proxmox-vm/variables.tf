@@ -36,11 +36,12 @@ variable "ssh_public_key" {
 }
 
 variable "disks" {
-  description = "VM disks, in order. The FIRST disk is imported from image_file_id (OS disk); subsequent disks are blank (e.g. for Longhorn)."
+  description = "VM disks, in order. The FIRST disk is imported from image_file_id (OS disk); subsequent disks are either datastore-backed (blank, e.g. for Longhorn) or raw host-device passthrough (set datastore_id = \"\" and path_in_datastore instead)."
   type = list(object({
-    datastore_id = string
-    size         = number
-    interface    = string
+    datastore_id      = string
+    size              = optional(number)
+    interface         = string
+    path_in_datastore = optional(string)
   }))
 }
 
