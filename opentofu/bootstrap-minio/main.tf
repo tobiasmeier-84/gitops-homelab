@@ -139,6 +139,12 @@ resource "null_resource" "state_backup_setup" {
       "sudo chown admin:admin /etc/state-backup/rclone.conf /etc/state-backup/age-recipient.txt",
       "sudo chmod 600 /etc/state-backup/rclone.conf /etc/state-backup/age-recipient.txt",
       "sudo apt-get update && sudo apt-get install -y curl age zstd unzip",
+      # KNOWN BROKEN as of 2026-09-30: dl.min.io returns 410 Gone (MinIO discontinued
+      # community binary distribution, archived the project Feb 2026). No confirmed
+      # working replacement URL found yet for mc specifically (unlike the minio server
+      # binary, which now uses a pinned GitHub release). mc is only used for admin
+      # tasks (bucket creation), not the running service, so this is a real but
+      # non-blocking gap — real fix TBD.
       "which mc >/dev/null || (curl -sL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc && sudo install /tmp/mc /usr/local/bin/mc)",
       "which rclone >/dev/null || (curl -sL https://rclone.org/install.sh | sudo bash)",
       "mc alias set homelab https://iapetus.orbit.solsys.dev:9000 '${var.minio_root_user}' '${var.minio_root_password}'",

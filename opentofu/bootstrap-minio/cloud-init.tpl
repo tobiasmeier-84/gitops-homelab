@@ -45,7 +45,7 @@ runcmd:
   - useradd -r minio-user -s /sbin/nologin || true
   - mkdir -p /data/minio
   - chown -R minio-user:minio-user /data/minio
-  - wget -q https://dl.min.io/server/minio/release/linux-amd64/minio -O /usr/local/bin/minio
+  - wget -q https://github.com/minio/minio/releases/download/RELEASE.2025-10-15T17-29-55Z/minio -O /usr/local/bin/minio
   - chmod +x /usr/local/bin/minio
   - systemctl daemon-reload
   - systemctl enable --now minio
