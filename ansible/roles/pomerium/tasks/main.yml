@@ -98,12 +98,14 @@
     mode: '0644'
   notify: restart pomerium
 
-- name: Enable and start Pomerium
-  systemd:
-    name: pomerium
-    enabled: true
-    state: started
-    daemon_reload: true
+# ============================================================================
+# REORDERED 2026-09-30/10-01: SSH key generation must happen BEFORE the
+# service starts — Pomerium's config.yaml references these key files and
+# fails validation at startup if they don't exist yet. This bug was never
+# caught before because the role had never actually been run against a
+# genuinely fresh VM (deimos was rebuilt from scratch after a real,
+# separate incident — see environments/prod/main.tf).
+# ============================================================================
 
 - name: Create directory for Pomerium SSH keys
   file:
@@ -143,3 +145,10 @@
     owner: pomerium
     group: pomerium
     recurse: true
+
+- name: Enable and start Pomerium
+  systemd:
+    name: pomerium
+    enabled: true
+    state: started
+    daemon_reload: true
