@@ -80,11 +80,12 @@
 # confirmed via real measurement: 300-675ms per-write latency at low queue
 # depth). See ADR-0005 addendum, 2026-09-29/30.
 #
-# MIMAS has LIVE DATA on its disks (mounted as canterbury-1/2/3,
-# provisioned 2026-09-29, since retagged but never reformatted/remounted —
-# this task set skips mimas entirely to avoid ever touching that live data
-# again). ENCELADUS and RHEA use the newer, cleaner ct-slow/ct-general-1/2
-# naming, provisioned fresh with no prior data at risk.
+# UPDATE 2026-10-01: mimas was fully destroyed and rebuilt from scratch
+# after a real, serious incident (see environments/prod/main.tf comment
+# on module.mimas for full detail) — it no longer has any live data to
+# protect, and now uses the same clean ct-slow/ct-general-1/2 provisioning
+# as rhea. The old canterbury-1/2/3 Longhorn disk names were manually
+# removed and replaced with ct-slow/ct-general-1/2 (2026-10-01) to match.
 #
 # Three-tier scheme: the Patriot = "slow" tag; the two healthy VK0480 disks
 # = "general" tag. Registered directly via Node CR patch (not the
@@ -96,17 +97,17 @@
 - name: Identify canterbury-replacement disk 1 (Patriot, "slow" tier) — enceladus/rhea only, fresh provisioning
   set_fact:
     ct_slow_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi3"
-  when: inventory_hostname in ["enceladus", "rhea"]
+  when: inventory_hostname in ["enceladus", "rhea", "mimas"]
 
 - name: Identify canterbury-replacement disk 2 ("general" tier) — enceladus/rhea only, fresh provisioning
   set_fact:
     ct_general1_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi4"
-  when: inventory_hostname in ["enceladus", "rhea"]
+  when: inventory_hostname in ["enceladus", "rhea", "mimas"]
 
 - name: Identify canterbury-replacement disk 3 ("general" tier) — enceladus/rhea only, fresh provisioning
   set_fact:
     ct_general2_device: "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi5"
-  when: inventory_hostname in ["enceladus", "rhea"]
+  when: inventory_hostname in ["enceladus", "rhea", "mimas"]
 
 - name: Format canterbury-replacement disks with ext4 — enceladus/rhea only
   filesystem:
@@ -116,7 +117,7 @@
     - "{{ ct_slow_device | default('') }}"
     - "{{ ct_general1_device | default('') }}"
     - "{{ ct_general2_device | default('') }}"
-  when: inventory_hostname in ["enceladus", "rhea"]
+  when: inventory_hostname in ["enceladus", "rhea", "mimas"]
 
 - name: Get UUIDs of canterbury-replacement disks — enceladus/rhea only
   command: "blkid -s UUID -o value {{ item }}"
@@ -126,7 +127,7 @@
     - "{{ ct_slow_device | default('') }}"
     - "{{ ct_general1_device | default('') }}"
     - "{{ ct_general2_device | default('') }}"
-  when: inventory_hostname in ["enceladus", "rhea"]
+  when: inventory_hostname in ["enceladus", "rhea", "mimas"]
 
 - name: Create mount points for canterbury-replacement disks — enceladus/rhea only
   file:
@@ -134,7 +135,7 @@
     state: directory
     mode: '0755'
   loop: ["ct-slow", "ct-general-1", "ct-general-2"]
-  when: inventory_hostname in ["enceladus", "rhea"]
+  when: inventory_hostname in ["enceladus", "rhea", "mimas"]
 
 - name: Mount canterbury-replacement disks persistently (by UUID) — enceladus/rhea only
   mount:
@@ -143,7 +144,7 @@
     fstype: ext4
     state: mounted
   loop: "{{ ['ct-slow', 'ct-general-1', 'ct-general-2'] | zip(ct_uuid_results.results | default([])) | list }}"
-  when: inventory_hostname in ["enceladus", "rhea"]
+  when: inventory_hostname in ["enceladus", "rhea", "mimas"]
 
 - name: Register canterbury-replacement disks with Longhorn directly (Node CR patch — these nodes were already bootstrapped, so the one-time annotation won't fire again) — enceladus/rhea only
   kubernetes.core.k8s:
@@ -171,32 +172,5 @@
             allowScheduling: true
             tags:
               - general
-  when: inventory_hostname in ["enceladus", "rhea"]
+  when: inventory_hostname in ["enceladus", "rhea", "mimas"]
 
-- name: Update mimas's EXISTING canterbury-1/2/3 disk tags only (NOT touching mount/format — these disks hold LIVE replica data provisioned 2026-09-29, only the Longhorn tag metadata changes)
-  kubernetes.core.k8s:
-    kubeconfig: /etc/rancher/rke2/rke2.yaml
-    kind: Node
-    api_version: longhorn.io/v1beta2
-    name: mimas
-    namespace: longhorn-system
-    state: patched
-    definition:
-      spec:
-        disks:
-          canterbury-1:
-            path: /mnt/longhorn/canterbury-1
-            allowScheduling: true
-            tags:
-              - slow
-          canterbury-2:
-            path: /mnt/longhorn/canterbury-2
-            allowScheduling: true
-            tags:
-              - general
-          canterbury-3:
-            path: /mnt/longhorn/canterbury-3
-            allowScheduling: true
-            tags:
-              - general
-  when: inventory_hostname == "mimas"
