@@ -7,54 +7,6 @@ resource "proxmox_node_disk_zfs" "razorback" {
   devices   = ["/dev/${var.razorback_disk_id[each.value]}"]
 }
 
-resource "proxmox_node_disk_zfs" "tachi" {
-  for_each = toset(var.nodes)
-
-  node_name = each.value
-  name      = "tachi"
-  raidlevel = "single"
-  devices   = ["/dev/${var.tachi_disk_id[each.value]}"]
-}
-
-# ============================================================================
-# CANTERBURY: raw zpool creation via SSH, bypassing Proxmox's own ZFS
-# creation API — that API's "single" raidlevel rejects more than 1 disk,
-# so a genuine multi-disk stripe (no redundancy, max capacity) isn't
-# reachable through proxmox_node_disk_zfs at all. Longhorn already
-# provides redundancy at the cluster level (see ADR-0002), so host-level
-# redundancy here (raidz1) would cost ~1/3 capacity for protection this
-# design doesn't need.
-#
-# TRADE-OFF: this is an imperative provisioner, not a declarative resource
-# — OpenTofu doesn't track its state the way it does proxmox_node_disk_zfs.
-# Requires: local ssh-agent running with a key authorized for root on each
-# node (same KeePassXC-backed SSH setup already in use elsewhere).
-#
-# The `zpool list ... || zpool create ...` pattern makes this idempotent —
-# safe to re-run `tofu apply` without erroring if the pool already exists.
-# ============================================================================
-resource "null_resource" "canterbury_zpool" {
-  for_each = toset(var.nodes)
-
-  triggers = {
-    node  = each.value
-    disks = join(",", var.sata_disk_ids[each.value])
-  }
-
-  connection {
-    type  = "ssh"
-    host  = "${each.value}.belt.solsys.dev"
-    user  = "root"
-    agent = true  # uses local ssh-agent (KeePassXC-loaded key), no key file referenced here
-  }
-
-  provisioner "remote-exec" {
-    inline = [
-      "zpool list -H -o name | grep -qx canterbury || zpool create canterbury ${join(" ", [for d in var.sata_disk_ids[each.value] : "/dev/${d}"])}"
-    ]
-  }
-}
-
 resource "proxmox_storage_zfspool" "razorback" {
   id       = "razorback"
   nodes    = var.nodes
@@ -64,23 +16,38 @@ resource "proxmox_storage_zfspool" "razorback" {
   depends_on = [proxmox_node_disk_zfs.razorback]
 }
 
+# ============================================================================
+# TACHI: ceres only. mimas/rhea migrated to direct raw-disk passthrough for
+# Longhorn's "fast" tier 2026-09-30 (real, controlled testing showed this
+# resolves a replica-ejection pattern traced to ZFS+zvol write latency on
+# the Patriot SSD and, by extension, this pool's own zvol architecture —
+# see ADR-0005 addendum). Only enceladus (ceres) retains the original
+# zvol-backed tachi disk, migration pending.
+# ============================================================================
+resource "proxmox_node_disk_zfs" "tachi" {
+  for_each = toset(["ceres"])
+
+  node_name = each.value
+  name      = "tachi"
+  raidlevel = "single"
+  devices   = ["/dev/${var.tachi_disk_id[each.value]}"]
+}
+
 resource "proxmox_storage_zfspool" "tachi" {
   id       = "tachi"
-  nodes    = var.nodes
+  nodes    = ["ceres"]
   zfs_pool = "tachi"
   content  = ["images"]
 
   depends_on = [proxmox_node_disk_zfs.tachi]
 }
 
-resource "proxmox_storage_zfspool" "canterbury" {
-  id       = "canterbury"
-  nodes    = var.nodes
-  zfs_pool = "canterbury"
-  content  = ["images"]
-
-  depends_on = [null_resource.canterbury_zpool]
-}
+# ============================================================================
+# CANTERBURY: REMOVED 2026-09-30. All three nodes (enceladus/mimas/rhea)
+# migrated to direct raw-disk passthrough for Longhorn's "general"/"slow"
+# tiers, replacing the striped canterbury zpool entirely — see ADR-0005
+# addendum. The pool no longer exists on any node.
+# ============================================================================
 
 # ============================================================================
 # Enables the 'snippets' and 'import' content types on each node's default
@@ -109,64 +76,12 @@ resource "null_resource" "local_storage_content" {
   }
 }
 
-resource "null_resource" "canterbury_autoexpand" {
-  for_each = toset(var.nodes)
-
-  depends_on = [null_resource.canterbury_zpool]
-
-  connection {
-    type  = "ssh"
-    host  = "${each.value}.belt.solsys.dev"
-    user  = "root"
-    agent = true
-  }
-
-  provisioner "remote-exec" {
-    inline = [
-      "zpool set autoexpand=on canterbury"
-    ]
-  }
-}
-
 # ============================================================================
-# SCRATCH-USB: dedicated single-disk pool on pallas only, for the backup
-# pipeline's scratch space. Physically an old external USB 3.0 drive
-# (14.6TB, repurposed). Deliberately isolated from canterbury/tachi to
-# decouple backup I/O from the pool serving live production data — see
-# ADR-0005 addendum, real incident on 2026-09-23 where sustained backup
-# read I/O correlated with a live Longhorn volume going degraded.
-#
-# Single-node only (pallas), unlike razorback/tachi/canterbury which exist
-# identically on all three nodes — this disk is physically attached to
-# just one host.
+# SCRATCH-USB: REMOVED 2026-09-30. The physical USB disk suffered a
+# permanent hardware failure (110,763 data errors, 2026-09-28 incident).
+# Deliberately not rebuilt on replacement hardware — the backup pipeline
+# redesign no longer depends on this dedicated disk. See ADR-0005 addendum.
 # ============================================================================
-resource "null_resource" "scratch_usb_zpool" {
-  triggers = {
-    disk = var.scratch_usb_disk_id
-  }
-
-  connection {
-    type  = "ssh"
-    host  = "pallas.belt.solsys.dev"
-    user  = "root"
-    agent = true
-  }
-
-  provisioner "remote-exec" {
-    inline = [
-      "zpool list -H -o name | grep -qx scratch-usb || zpool create scratch-usb /dev/${var.scratch_usb_disk_id}"
-    ]
-  }
-}
-
-resource "proxmox_storage_zfspool" "scratch_usb" {
-  id       = "scratch-usb"
-  nodes    = ["pallas"]
-  zfs_pool = "scratch-usb"
-  content  = ["images"]
-
-  depends_on = [null_resource.scratch_usb_zpool]
-}
 
 # ============================================================================
 # Caps ZFS ARC (Adaptive Replacement Cache) at 8GB per node. Uncapped, ARC
