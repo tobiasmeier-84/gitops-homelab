@@ -1,7 +1,7 @@
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: longhorn-bulk
+  name: longhorn-general
   annotations:
     storageclass.kubernetes.io/is-default-class: "true"
 provisioner: driver.longhorn.io
@@ -10,7 +10,7 @@ reclaimPolicy: Retain
 volumeBindingMode: Immediate
 parameters:
   numberOfReplicas: "3"
-  diskSelector: "bulk"
+  diskSelector: "general"
   staleReplicaTimeout: "30"
 ---
 apiVersion: storage.k8s.io/v1
@@ -24,19 +24,6 @@ volumeBindingMode: Immediate
 parameters:
   numberOfReplicas: "3"
   diskSelector: "fast"
-  staleReplicaTimeout: "30"
----
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: longhorn-general
-provisioner: driver.longhorn.io
-allowVolumeExpansion: true
-reclaimPolicy: Retain
-volumeBindingMode: Immediate
-parameters:
-  numberOfReplicas: "3"
-  diskSelector: "general"
   staleReplicaTimeout: "30"
 ---
 apiVersion: storage.k8s.io/v1
