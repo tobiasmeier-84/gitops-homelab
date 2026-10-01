@@ -45,6 +45,12 @@
     dest: /etc/pomerium-cloudflare-credentials.ini
     mode: '0600'
 
+- name: Ensure certbot's renewal-hooks/deploy directory exists (fresh VM, certbot hasn't run yet)
+  file:
+    path: /etc/letsencrypt/renewal-hooks/deploy
+    state: directory
+    mode: '0755'
+
 - name: Create certbot deploy hook to grant Pomerium access to certs
   copy:
     content: |
