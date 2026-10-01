@@ -107,10 +107,6 @@ module "mimas" {
 
   disks = [
     { datastore_id = "razorback", size = 300, interface = "scsi0" },
-    { datastore_id = "", interface = "scsi3", path_in_datastore = "/dev/disk/by-id/ata-Patriot_P210_1024GB_P210IICB25082903441", size = 953 }, # Direct passthrough, "slow" Longhorn tier
-    { datastore_id = "", interface = "scsi4", path_in_datastore = "/dev/disk/by-id/ata-VK0480GDJXV_PHWL52650138480QGN", size = 447 }, # Direct passthrough, "general" Longhorn tier
-    { datastore_id = "", interface = "scsi5", path_in_datastore = "/dev/disk/by-id/ata-VK0480GDJXV_PHWL505401K1480QGN", size = 447 }, # Direct passthrough, "general" Longhorn tier
-    { datastore_id = "", interface = "scsi6", path_in_datastore = "/dev/disk/by-id/nvme-SAMSUNG_MZVLW512HMJP-000H1_S36ENB0K201473", size = 476 }, # Direct passthrough, "fast" Longhorn tier (former tachi)
   ]
 
   network_interfaces = [
@@ -120,6 +116,48 @@ module "mimas" {
     { bridge = "vmbr3", address = "10.10.40.42/24" },
     { bridge = "vmbr4", address = "10.10.50.42/24", gateway = "10.10.50.1" },
   ]
+}
+# ============================================================================
+# Direct passthrough of mimas's three "canterbury-replacement" disks +
+# former tachi disk, via null_resource + qm set (root SSH), NOT the native
+# path_in_datastore attribute — that requires literal root@pam API access,
+# which our terraform@pve token cannot obtain even with Administrator ACL
+# and privsep disabled (confirmed 2026-10-01: "Only root can pass arbitrary
+# filesystem paths" is a hardcoded Proxmox check, not an ACL-governed one).
+# Granting the automation token literal root would be a real, meaningful
+# security downgrade — this SSH-based approach avoids that trade-off,
+# using the same real, proven pattern validated on rhea's first migration.
+#
+# SAFETY: see the real, verified eros disk inventory in the comment above
+# module "mimas" — nvme0n1/sda/sdb are razorback/rpool, NEVER passthrough
+# those. This exact mistake caused a real, serious data-corruption
+# incident on 2026-09-30 (see that comment for full detail).
+# ============================================================================
+resource "null_resource" "mimas_disk_passthrough" {
+  triggers = {
+    disk_c = "ata-Patriot_P210_1024GB_P210IICB25082903441"
+    disk_d = "ata-VK0480GDJXV_PHWL52650138480QGN"
+    disk_e = "ata-VK0480GDJXV_PHWL505401K1480QGN"
+    disk_f = "nvme-SAMSUNG_MZVLW512HMJP-000H1_S36ENB0K201473"
+  }
+
+  connection {
+    type  = "ssh"
+    host  = "eros.belt.solsys.dev"
+    user  = "root"
+    agent = true
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "qm config 202 | grep -q '^scsi3:' || qm set 202 --scsi3 /dev/disk/by-id/ata-Patriot_P210_1024GB_P210IICB25082903441",
+      "qm config 202 | grep -q '^scsi4:' || qm set 202 --scsi4 /dev/disk/by-id/ata-VK0480GDJXV_PHWL52650138480QGN",
+      "qm config 202 | grep -q '^scsi5:' || qm set 202 --scsi5 /dev/disk/by-id/ata-VK0480GDJXV_PHWL505401K1480QGN",
+      "qm config 202 | grep -q '^scsi6:' || qm set 202 --scsi6 /dev/disk/by-id/nvme-SAMSUNG_MZVLW512HMJP-000H1_S36ENB0K201473"
+    ]
+  }
+
+  depends_on = [module.mimas]
 }
 
 # ============================================================================
