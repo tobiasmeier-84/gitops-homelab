@@ -69,7 +69,29 @@ resource "proxmox_download_file" "debian_pallas" {
 }
 
 # ============================================================================
-# mimas — RKE2 node 2, on eros. Same shape as enceladus.
+# mimas — RKE2 node 2, on eros.
+#
+# REBUILT 2026-09-30 after a real, serious incident: a manual `qm set`
+# passthrough command pointed at the SAME physical NVMe (nvme0n1) that
+# razorback's ZFS pool also used, causing real, permanent data corruption
+# on mimas's own root disk (crashed etcd) and two OTHER, unrelated VMs
+# sharing that same pool (deimos, nereid — both also rebuilt tonight).
+# Root cause: raw device passthrough and ZFS pool membership on the same
+# physical disk conflict directly — never assign a disk to both.
+#
+# Real, current eros disk inventory (confirmed via `ls -la
+# /dev/disk/by-id/` cross-referenced against `zpool status`, 2026-09-30):
+#   nvme0n1 (S3WTNX1M187076) = razorback (ZFS, this VM's own scsi0 — DO NOT PASSTHROUGH)
+#   nvme1n1 (S36ENB0K201473) = free -> "fast" tier passthrough (scsi6)
+#   sda (VK0480...501RE), sdb (VK0480...503E) = rpool mirror (Proxmox's own boot disk — DO NOT TOUCH)
+#   sdc (Patriot), sdd/sde (VK0480 x2) = free -> "slow"/"general" passthrough
+#
+# Native path_in_datastore syntax (datastore_id = "", confirmed via
+# provider docs 2026-09-30) replaces the earlier null_resource+qm
+# workaround used on the first attempt — proper, idiomatic Terraform
+# management, not an imperative side-channel. Real, controlled testing
+# the same night validated this direct-attach architecture's stability
+# (see ADR-0005 addendum) before this rebuild.
 # ============================================================================
 
 module "mimas" {
@@ -83,18 +105,12 @@ module "mimas" {
   image_file_id  = proxmox_download_file.debian_eros.id
   ssh_public_key = var.vm_ssh_public_key
 
-  # KNOWN, DELIBERATE STATE DRIFT (2026-09-29/30): rhea's real, live disk
-  # configuration no longer matches this list at all. Both canterbury and
-  # tachi (zvol-backed) were destroyed and replaced with direct raw-disk
-  # passthrough (scsi3/4/5 = former canterbury's 3 physical disks, tagged
-  # slow/general/general; scsi6 = former tachi's NVMe, tagged fast) — see
-  # ADR-0005 addendum. scratch-usb no longer exists at all (USB disk
-  # hardware failure, 2026-09-28 incident). DO NOT apply changes to
-  # module.rhea until this is reconciled deliberately, via `moved`
-  # blocks or careful `tofu state mv` surgery — this VM hosts live
-  # production data (Nextcloud + database replicas).
   disks = [
     { datastore_id = "razorback", size = 300, interface = "scsi0" },
+    { datastore_id = "", interface = "scsi3", path_in_datastore = "/dev/disk/by-id/ata-Patriot_P210_1024GB_P210IICB25082903441", size = 953 }, # Direct passthrough, "slow" Longhorn tier
+    { datastore_id = "", interface = "scsi4", path_in_datastore = "/dev/disk/by-id/ata-VK0480GDJXV_PHWL52650138480QGN", size = 447 }, # Direct passthrough, "general" Longhorn tier
+    { datastore_id = "", interface = "scsi5", path_in_datastore = "/dev/disk/by-id/ata-VK0480GDJXV_PHWL505401K1480QGN", size = 447 }, # Direct passthrough, "general" Longhorn tier
+    { datastore_id = "", interface = "scsi6", path_in_datastore = "/dev/disk/by-id/nvme-SAMSUNG_MZVLW512HMJP-000H1_S36ENB0K201473", size = 476 }, # Direct passthrough, "fast" Longhorn tier (former tachi)
   ]
 
   network_interfaces = [
@@ -104,38 +120,6 @@ module "mimas" {
     { bridge = "vmbr3", address = "10.10.40.42/24" },
     { bridge = "vmbr4", address = "10.10.50.42/24", gateway = "10.10.50.1" },
   ]
-}
-
-# Direct passthrough of the three former canterbury physical disks to mimas,
-# bypassing ZFS/zvol entirely — Longhorn's own documented architecture expects
-# direct-attached storage, and real, repeated replica-ejection incidents
-# (2026-09-27/28) correlated with ZFS sync-write queue latency on this tier.
-# See ADR-0005 addendum. Uses null_resource + qm set since the Terraform
-# provider's disk block is built for datastore-backed disks, not raw device
-# passthrough — same pattern as the ZFS pool creation in bootstrap-storage.
-resource "null_resource" "mimas_canterbury_passthrough" {
-  triggers = {
-    disk_c = "ata-Patriot_P210_1024GB_P210IICB25082903441"
-    disk_d = "ata-VK0480GDJXV_PHWL52650138480QGN"
-    disk_e = "ata-VK0480GDJXV_PHWL505401K1480QGN"
-  }
-
-  connection {
-    type  = "ssh"
-    host  = "eros.belt.solsys.dev"
-    user  = "root"
-    agent = true
-  }
-
-  provisioner "remote-exec" {
-    inline = [
-      "qm config 202 | grep -q '^scsi3:' || qm set 202 --scsi3 /dev/disk/by-id/ata-Patriot_P210_1024GB_P210IICB25082903441",
-      "qm config 202 | grep -q '^scsi4:' || qm set 202 --scsi4 /dev/disk/by-id/ata-VK0480GDJXV_PHWL52650138480QGN",
-      "qm config 202 | grep -q '^scsi5:' || qm set 202 --scsi5 /dev/disk/by-id/ata-VK0480GDJXV_PHWL505401K1480QGN"
-    ]
-  }
-
-  depends_on = [module.mimas]
 }
 
 # ============================================================================
@@ -205,6 +189,15 @@ module "triton" {
   ]
 }
 
+# ============================================================================
+# nereid — REBUILT 2026-09-30, after real, permanent data corruption on
+# this VM's razorback disk (same real incident described in mimas's
+# comment above — a passthrough disk conflict on eros's shared NVMe
+# corrupted every VM sharing that pool, including this one). Config
+# below is unchanged from before the incident; razorback itself has
+# since been destroyed and recreated clean (see bootstrap-storage).
+# ============================================================================
+
 module "nereid" {
   source = "../../modules/proxmox-vm"
 
@@ -246,6 +239,15 @@ module "proteus" {
     { bridge = "vmbr3", address = "10.10.40.13/24" },
   ]
 }
+
+# ============================================================================
+# deimos — REBUILT 2026-09-30, after real, permanent data corruption on
+# this VM's razorback disk (same real incident described in mimas's
+# comment above). Config below is unchanged from before the incident;
+# razorback itself has since been destroyed and recreated clean (see
+# bootstrap-storage). This is the Pomerium ZTNA gateway — real, live
+# access depends on it; verify reachability carefully after rebuild.
+# ============================================================================
 
 module "deimos" {
   source = "../../modules/proxmox-vm"
