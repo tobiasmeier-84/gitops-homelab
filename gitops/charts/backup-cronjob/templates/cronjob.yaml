@@ -49,8 +49,8 @@ spec:
                   value: "{{ .Values.dbHost }}"
                 - name: DB_PORT
                   value: "{{ .Values.dbPort }}"
-              - name: UPLOAD_ENABLED
-                value: "{{ .Values.uploadEnabled }}"
+                - name: UPLOAD_ENABLED
+                  value: "{{ .Values.uploadEnabled }}"
               envFrom:
                 - secretRef:
                     name: backup-chain-credentials
