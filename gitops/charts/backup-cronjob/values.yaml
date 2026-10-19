@@ -9,3 +9,4 @@ nextcloudDeployment: rocinante-nextcloud
 dbHost: barbapiccola-rw.rocinante.svc.cluster.local
 dbPort: "5432"
 dbSecretName: barbapiccola-app
+dbPvcSize: 10Gi

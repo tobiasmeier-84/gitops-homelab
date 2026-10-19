@@ -15,10 +15,8 @@ spec:
           serviceAccountName: {{ .Values.appName }}-backup
           restartPolicy: Never
           # Long enough for the SIGTERM trap's cleanup() to run in full
-          # (turn off maintenance mode, capture logs, delete child pods)
-          # if the job is deleted manually mid-run - confirmed necessary
-          # 2026-09-28: with the default 30s grace, cleanup never ran and
-          # both worker pods + maintenance mode were left dangling.
+          # (turn off maintenance mode, delete the snapshot/clone/scratch
+          # PVCs, capture logs) if the job is deleted manually mid-run.
           terminationGracePeriodSeconds: 120
           securityContext:
             runAsNonRoot: true
@@ -67,18 +65,19 @@ spec:
                 - |
                   set -e
                   RUN_ID=$(date +%Y%m%d-%H%M%S)
-                  RECV_POD="${APP_NAME}-receiver-${RUN_ID}"
-                  COPY_POD="${APP_NAME}-filecopy-${RUN_ID}"
+                  SNAPSHOT_NAME="${APP_NAME}-snap-${RUN_ID}"
+                  CLONE_PVC="${APP_NAME}-clone-${RUN_ID}"
+                  SCRATCH_PVC="${APP_NAME}-scratch-${RUN_ID}"
+                  DBDUMP_PVC="${APP_NAME}-dbdump-${RUN_ID}"
+                  WORKER_POD="${APP_NAME}-worker-${RUN_ID}"
                   DBDUMP_POD="${APP_NAME}-dbdump-${RUN_ID}"
-                  FILEPROCESS_POD="${APP_NAME}-fileprocess-${RUN_ID}"
                   DBPROCESS_POD="${APP_NAME}-dbprocess-${RUN_ID}"
-                  FILE_COPY_STATUS="NOT_RUN"
-                  FILE_PROCESS_STATUS="SKIPPED"
+                  DBUPLOAD_POD="${APP_NAME}-dbupload-${RUN_ID}"
+                  FILE_STATUS="NOT_RUN"
                   DB_DUMP_STATUS="NOT_RUN"
                   DB_PROCESS_STATUS="SKIPPED"
+                  DB_UPLOAD_STATUS="SKIPPED"
                   MAINTENANCE_ON="no"
-                  RECV_IP=""
-                  RSYNC_PASSWORD=""
                   export RUN_ID APP_NAME
 
                   : > /tmp/worker-output.log
@@ -93,8 +92,7 @@ spec:
                     kubectl exec -n "$NAMESPACE" deploy/"$NEXTCLOUD_DEPLOYMENT" -- su -s /bin/sh www-data -c "php occ maintenance:mode --$1"
                   }
 
-                  # Saves the last 200 log lines of each pod into the report attachment, then deletes the pod.
-                  capture_and_delete() {
+                  capture_and_delete_pods() {
                     for p in "$@"; do
                       if kubectl get pod "$p" -n "$NAMESPACE" >/dev/null 2>&1; then
                         echo "=== logs (last 200 lines): $p ===" >> /tmp/worker-output.log
@@ -110,19 +108,19 @@ spec:
                       log "Maintenance mode still on at exit - turning it off"
                       maintenance off || log "WARNING: could not turn maintenance mode off - check Nextcloud manually"
                     fi
-                    capture_and_delete "$COPY_POD" "$RECV_POD" "$DBDUMP_POD" "$FILEPROCESS_POD" "$DBPROCESS_POD"
-                    export STATUS="Files: copy=${FILE_COPY_STATUS} process=${FILE_PROCESS_STATUS} | Database: dump=${DB_DUMP_STATUS} process=${DB_PROCESS_STATUS} (encryption/upload/prune not yet enabled)"
+                    capture_and_delete_pods "$WORKER_POD" "$DBDUMP_POD" "$DBPROCESS_POD" "$DBUPLOAD_POD"
+                    kubectl delete pvc "$CLONE_PVC" -n "$NAMESPACE" --ignore-not-found=true
+                    kubectl delete pvc "$SCRATCH_PVC" -n "$NAMESPACE" --ignore-not-found=true
+                    kubectl delete pvc "$DBDUMP_PVC" -n "$NAMESPACE" --ignore-not-found=true
+                    kubectl delete volumesnapshot "$SNAPSHOT_NAME" -n "$NAMESPACE" --ignore-not-found=true
+                    export STATUS="Files: ${FILE_STATUS} | Database: dump=${DB_DUMP_STATUS} process=${DB_PROCESS_STATUS} upload=${DB_UPLOAD_STATUS}"
                     python3 /scripts-notify/notify.py || echo "WARNING: notification failed to send"
                   }
 
-                  # Returns 0 when the pod reaches Succeeded, 1 on Failed or timeout (returns immediately on Failed).
-                  # Set guard="yes" as the 3rd argument to also kill the pod immediately if a
-                  # live replica leaves RW during the wait (used for the copy pod in pass 2;
-                  # skipped for DB dump / compress pods, which don't write to the live volume).
+                  # Returns 0 when the pod reaches Succeeded, 1 on Failed or timeout.
                   wait_pod() {
                     pod_name="$1"
                     timeout_s="$2"
-                    guard="${3:-no}"
                     elapsed=0
                     while [ "$elapsed" -lt "$timeout_s" ]; do
                       phase=$(kubectl get pod "$pod_name" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
@@ -132,11 +130,6 @@ spec:
                       if [ "$phase" = "Failed" ]; then
                         return 1
                       fi
-                      if [ "$guard" = "yes" ] && ! check_replica_health; then
-                        log "GUARD TRIPPED: a live replica is not RW - killing $pod_name immediately to stop the write load"
-                        kubectl delete pod "$pod_name" -n "$NAMESPACE" --ignore-not-found=true --force --grace-period=0
-                        return 1
-                      fi
                       sleep 10
                       elapsed=$((elapsed + 10))
                     done
@@ -144,162 +137,39 @@ spec:
                     return 1
                   }
 
-                  # Returns 0 when the file exists in the pod, 1 if the pod ends first or on timeout.
-                  wait_file() {
-                    pod_name="$1"
-                    path="$2"
-                    timeout_s="$3"
+                  # Reads the live PVC's real, current capacity and adds 10% headroom,
+                  # rather than trusting a static Helm value that could drift from
+                  # reality as the volume grows over time. Kubernetes quantity suffixes
+                  # (Gi/Mi/Ti) are parsed with a plain shell split, numeric part scaled
+                  # by 1.1 and rounded up (awk, since POSIX shell has no float math).
+                  compute_sized_with_headroom() {
+                    live_size=$(kubectl get pvc "$PVC_NAME" -n "$NAMESPACE" -o jsonpath='{.status.capacity.storage}')
+                    if [ -z "$live_size" ]; then
+                      echo "compute_sized_with_headroom: could not read live PVC size, falling back to PVC_SIZE=$PVC_SIZE" >&2
+                      echo "$PVC_SIZE"
+                      return
+                    fi
+                    num=$(echo "$live_size" | sed 's/[A-Za-z]*$//')
+                    unit=$(echo "$live_size" | sed 's/^[0-9]*//')
+                    scaled=$(awk -v n="$num" 'BEGIN { printf "%d", (n * 1.1) + 0.9999 }')
+                    echo "${scaled}${unit}"
+                  }
+
+                  # Returns 0 once the PVC is Bound, 1 on timeout.
+                  wait_pvc_bound() {
+                    pvc_name="$1"
+                    timeout_s="$2"
                     elapsed=0
                     while [ "$elapsed" -lt "$timeout_s" ]; do
-                      phase=$(kubectl get pod "$pod_name" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-                      if [ "$phase" = "Failed" ] || [ "$phase" = "Succeeded" ]; then
-                        return 1
-                      fi
-                      if ! check_replica_health; then
-                        log "GUARD TRIPPED: a live replica is not RW - killing $pod_name immediately to stop the write load"
-                        kubectl delete pod "$pod_name" -n "$NAMESPACE" --ignore-not-found=true --force --grace-period=0
-                        return 1
-                      fi
-                      if kubectl exec -n "$NAMESPACE" "$pod_name" -- test -f "$path" >/dev/null 2>&1; then
+                      phase=$(kubectl get pvc "$pvc_name" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+                      if [ "$phase" = "Bound" ]; then
                         return 0
                       fi
-                      sleep 30
-                      elapsed=$((elapsed + 30))
+                      sleep 10
+                      elapsed=$((elapsed + 10))
                     done
-                    echo "wait_file: timed out after ${timeout_s}s waiting for $path in $pod_name"
+                    echo "wait_pvc_bound: timed out after ${timeout_s}s waiting for $pvc_name"
                     return 1
-                  }
-
-                  # Returns 0 if every current replica of the live volume is RW, 1 otherwise
-                  # (a replica in WO means an active rebuild is in progress - exactly the
-                  # condition that has repeatedly ejected replicas under sustained writes).
-                  # Missing replicas (fewer than desired) are NOT treated as unhealthy here -
-                  # we deliberately run with 2/3 replicas while mimas's disk stays excluded.
-                  check_replica_health() {
-                    modes=$(kubectl get engines.longhorn.io -n longhorn-system -l longhornvolume="$LONGHORN_VOLUME" -o jsonpath='{.items[0].status.replicaModeMap}' 2>/dev/null)
-                    if [ -z "$modes" ]; then
-                      echo "check_replica_health: could not read replica status - treating as unhealthy (fail safe)"
-                      return 1
-                    fi
-                    if echo "$modes" | grep -qE '"(WO|ERR)"'; then
-                      echo "check_replica_health: a replica is not RW - $modes"
-                      return 1
-                    fi
-                    return 0
-                  }
-
-                  create_receiver_pod() {
-                    kubectl apply -f - << EOF
-                  apiVersion: v1
-                  kind: Pod
-                  metadata:
-                    name: $RECV_POD
-                    namespace: $NAMESPACE
-                    labels:
-                      app: backup-worker
-                  spec:
-                    restartPolicy: Never
-                    nodeSelector:
-                      kubernetes.io/hostname: rhea
-                    securityContext:
-                      runAsNonRoot: true
-                      runAsUser: $WORKER_RUN_AS_USER
-                      fsGroup: $WORKER_RUN_AS_USER
-                      seccompProfile:
-                        type: RuntimeDefault
-                    containers:
-                      - name: receiver
-                        image: alpine/k8s:1.30.3
-                        securityContext:
-                          allowPrivilegeEscalation: false
-                          capabilities:
-                            drop: ["ALL"]
-                        env:
-                          - name: RSYNC_PASSWORD
-                            value: "$RSYNC_PASSWORD"
-                        command: ["/bin/sh", "/scripts/receiver.sh"]
-                        ports:
-                          - containerPort: 8873
-                        readinessProbe:
-                          tcpSocket:
-                            port: 8873
-                          periodSeconds: 5
-                        volumeMounts:
-                          - name: restore-local
-                            mountPath: /restore-local
-                          - name: scripts
-                            mountPath: /scripts
-                    volumes:
-                      - name: restore-local
-                        hostPath:
-                          path: /mnt/restore-direct
-                          type: Directory
-                      - name: scripts
-                        configMap:
-                          name: backup-pod-scripts
-                  EOF
-                  }
-
-                  create_copy_pod() {
-                    kubectl apply -f - << EOF
-                  apiVersion: v1
-                  kind: Pod
-                  metadata:
-                    name: $COPY_POD
-                    namespace: $NAMESPACE
-                    labels:
-                      app: backup-worker
-                  spec:
-                    restartPolicy: Never
-                    affinity:
-                      podAffinity:
-                        requiredDuringSchedulingIgnoredDuringExecution:
-                          - labelSelector:
-                              matchExpressions:
-                                - key: app.kubernetes.io/name
-                                  operator: In
-                                  values:
-                                    - nextcloud
-                                - key: app.kubernetes.io/component
-                                  operator: In
-                                  values:
-                                    - app
-                            topologyKey: kubernetes.io/hostname
-                    securityContext:
-                      runAsNonRoot: true
-                      runAsUser: $WORKER_RUN_AS_USER
-                      fsGroup: $WORKER_RUN_AS_USER
-                      seccompProfile:
-                        type: RuntimeDefault
-                    containers:
-                      - name: copy
-                        image: alpine/k8s:1.30.3
-                        securityContext:
-                          allowPrivilegeEscalation: false
-                          capabilities:
-                            drop: ["ALL"]
-                        env:
-                          - name: RSYNC_HOST
-                            value: "$RECV_IP"
-                          - name: RSYNC_PASSWORD
-                            value: "$RSYNC_PASSWORD"
-                          - name: RSYNC_BWLIMIT
-                            value: "{{ .Values.rsyncBwlimitKBps | default 20000 }}"
-                        command: ["/bin/sh", "/scripts/copy.sh"]
-                        volumeMounts:
-                          - name: live-data
-                            mountPath: /live-data
-                            readOnly: true
-                          - name: scripts
-                            mountPath: /scripts
-                    volumes:
-                      - name: live-data
-                        persistentVolumeClaim:
-                          claimName: $PVC_NAME
-                      - name: scripts
-                        configMap:
-                          name: backup-pod-scripts
-                  EOF
                   }
 
                   create_dbdump_pod() {
@@ -313,8 +183,6 @@ spec:
                       app: backup-worker
                   spec:
                     restartPolicy: Never
-                    nodeSelector:
-                      kubernetes.io/hostname: rhea
                     securityContext:
                       runAsNonRoot: true
                       runAsUser: $WORKER_RUN_AS_USER
@@ -338,70 +206,14 @@ spec:
                             value: "$DB_PORT"
                         command: ["/bin/sh", "/scripts/dbdump.sh"]
                         volumeMounts:
-                          - name: restore-local
+                          - name: dbdump-local
                             mountPath: /restore-local
                           - name: scripts
                             mountPath: /scripts
                     volumes:
-                      - name: restore-local
-                        hostPath:
-                          path: /mnt/restore-direct
-                          type: Directory
-                      - name: scripts
-                        configMap:
-                          name: backup-pod-scripts
-                  EOF
-                  }
-
-                  create_fileprocess_pod() {
-                    kubectl apply -f - << EOF
-                  apiVersion: v1
-                  kind: Pod
-                  metadata:
-                    name: $FILEPROCESS_POD
-                    namespace: $NAMESPACE
-                    labels:
-                      app: backup-worker
-                  spec:
-                    restartPolicy: Never
-                    nodeSelector:
-                      kubernetes.io/hostname: rhea
-                    securityContext:
-                      runAsNonRoot: true
-                      runAsUser: $WORKER_RUN_AS_USER
-                      fsGroup: $WORKER_RUN_AS_USER
-                      seccompProfile:
-                        type: RuntimeDefault
-                    containers:
-                      - name: fileprocess
-                        image: alpine/k8s:1.30.3
-                        securityContext:
-                          allowPrivilegeEscalation: false
-                          capabilities:
-                            drop: ["ALL"]
-                        env:
-                          - name: APP_NAME
-                            value: "$APP_NAME"
-                          - name: RUN_ID
-                            value: "$RUN_ID"
-                        command: ["/bin/sh", "/scripts/fileprocess.sh"]
-                        volumeMounts:
-                          - name: restore-local
-                            mountPath: /restore-local
-                            readOnly: true
-                          - name: scratch
-                            mountPath: /scratch
-                          - name: scripts
-                            mountPath: /scripts
-                    volumes:
-                      - name: restore-local
-                        hostPath:
-                          path: /mnt/restore-direct
-                          type: Directory
-                      - name: scratch
-                        hostPath:
-                          path: /mnt/scratch-direct
-                          type: Directory
+                      - name: dbdump-local
+                        persistentVolumeClaim:
+                          claimName: $DBDUMP_PVC
                       - name: scripts
                         configMap:
                           name: backup-pod-scripts
@@ -419,8 +231,6 @@ spec:
                       app: backup-worker
                   spec:
                     restartPolicy: Never
-                    nodeSelector:
-                      kubernetes.io/hostname: rhea
                     securityContext:
                       runAsNonRoot: true
                       runAsUser: $WORKER_RUN_AS_USER
@@ -436,109 +246,266 @@ spec:
                             drop: ["ALL"]
                         command: ["/bin/sh", "/scripts/dbprocess.sh"]
                         volumeMounts:
-                          - name: restore-local
+                          - name: dbdump-local
                             mountPath: /restore-local
                             readOnly: true
                           - name: scripts
                             mountPath: /scripts
                     volumes:
-                      - name: restore-local
-                        hostPath:
-                          path: /mnt/restore-direct
-                          type: Directory
+                      - name: dbdump-local
+                        persistentVolumeClaim:
+                          claimName: $DBDUMP_PVC
                       - name: scripts
                         configMap:
                           name: backup-pod-scripts
                   EOF
                   }
 
+                  create_dbupload_pod() {
+                    kubectl apply -f - << EOF
+                  apiVersion: v1
+                  kind: Pod
+                  metadata:
+                    name: $DBUPLOAD_POD
+                    namespace: $NAMESPACE
+                    labels:
+                      app: backup-worker
+                  spec:
+                    restartPolicy: Never
+                    securityContext:
+                      runAsNonRoot: true
+                      runAsUser: $WORKER_RUN_AS_USER
+                      fsGroup: $WORKER_RUN_AS_USER
+                      seccompProfile:
+                        type: RuntimeDefault
+                    containers:
+                      - name: dbupload
+                        image: alpine/k8s:1.30.3
+                        securityContext:
+                          allowPrivilegeEscalation: false
+                          capabilities:
+                            drop: ["ALL"]
+                        envFrom:
+                          - secretRef:
+                              name: backup-chain-credentials
+                        env:
+                          - name: APP_NAME
+                            value: "$APP_NAME"
+                          - name: RUN_ID
+                            value: "$RUN_ID"
+                        command: ["/bin/sh", "/scripts/dbupload.sh"]
+                        volumeMounts:
+                          - name: dbdump-local
+                            mountPath: /dbdump
+                            readOnly: true
+                          - name: scripts
+                            mountPath: /scripts
+                    volumes:
+                      - name: dbdump-local
+                        persistentVolumeClaim:
+                          claimName: $DBDUMP_PVC
+                      - name: scripts
+                        configMap:
+                          name: backup-worker-script
+                  EOF
+                  }
+
+                  create_worker_pod() {
+                    kubectl apply -f - << EOF
+                  apiVersion: v1
+                  kind: Pod
+                  metadata:
+                    name: $WORKER_POD
+                    namespace: $NAMESPACE
+                    labels:
+                      app: backup-worker
+                  spec:
+                    restartPolicy: Never
+                    securityContext:
+                      runAsNonRoot: true
+                      runAsUser: $WORKER_RUN_AS_USER
+                      fsGroup: $WORKER_RUN_AS_USER
+                      seccompProfile:
+                        type: RuntimeDefault
+                    containers:
+                      - name: worker
+                        image: alpine/k8s:1.30.3
+                        securityContext:
+                          allowPrivilegeEscalation: false
+                          capabilities:
+                            drop: ["ALL"]
+                        envFrom:
+                          - secretRef:
+                              name: backup-chain-credentials
+                        env:
+                          - name: APP_NAME
+                            value: "$APP_NAME"
+                          - name: RUN_ID
+                            value: "$RUN_ID"
+                        command: ["/bin/sh", "/scripts/backup-worker.sh"]
+                        volumeMounts:
+                          - name: clone-data
+                            mountPath: /data
+                            readOnly: true
+                          - name: scratch
+                            mountPath: /scratch
+                          - name: scripts
+                            mountPath: /scripts
+                    volumes:
+                      - name: clone-data
+                        persistentVolumeClaim:
+                          claimName: $CLONE_PVC
+                      - name: scratch
+                        persistentVolumeClaim:
+                          claimName: $SCRATCH_PVC
+                      - name: scripts
+                        configMap:
+                          name: backup-worker-script
+                  EOF
+                  }
+
                   trap cleanup EXIT
                   trap 'exit 143' TERM INT
 
-                  LONGHORN_VOLUME=$(kubectl get pvc "$PVC_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.volumeName}')
-                  log "Live Longhorn volume identified as $LONGHORN_VOLUME (for replica-health guard)"
+                  log "PHASE 1: brief maintenance window - snapshot AND db dump must both capture the exact same consistent moment"
+                  MAINTENANCE_ON="yes"
+                  maintenance on
+                  T_ON=$(date +%s)
 
-                  RSYNC_PASSWORD=$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')
-                  if [ "${#RSYNC_PASSWORD}" -lt 16 ]; then
-                    log "FATAL: could not generate a transfer password"
-                    exit 1
-                  fi
+                  kubectl apply -f - << EOF
+                  apiVersion: snapshot.storage.k8s.io/v1
+                  kind: VolumeSnapshot
+                  metadata:
+                    name: $SNAPSHOT_NAME
+                    namespace: $NAMESPACE
+                  spec:
+                    volumeSnapshotClassName: longhorn-snapshot-vsc
+                    source:
+                      persistentVolumeClaimName: $PVC_NAME
+                  EOF
 
-                  log "Starting receiver on rhea (rsync daemon writing straight to the local USB disk - no Longhorn volume in the copy path)"
-                  create_receiver_pod
-                  if kubectl wait --for=condition=Ready "pod/$RECV_POD" -n "$NAMESPACE" --timeout=300s; then
-                    RECV_IP=$(kubectl get pod "$RECV_POD" -n "$NAMESPACE" -o jsonpath='{.status.podIP}')
-                    log "Receiver ready at $RECV_IP"
-                    log "PHASE 1: file copy pass 1 (application ONLINE)"
-                    create_copy_pod
-                    if wait_file "$COPY_POD" /tmp/pass1-done 14400; then
-                      log "Pass 1 finished. PHASE 2: maintenance mode ON, pass 2 + DB dump in parallel"
-                      MAINTENANCE_ON="yes"
-                      maintenance on
-                      T_ON=$(date +%s)
-                      log "Maintenance mode ON"
-                      create_dbdump_pod
-                      SIGNALED="yes"
-                      kubectl exec -n "$NAMESPACE" "$COPY_POD" -- touch /tmp/start-pass2 || SIGNALED="no"
-                      if [ "$SIGNALED" = "yes" ] && wait_pod "$COPY_POD" 1800 "yes"; then
-                        FILE_COPY_STATUS="SUCCEEDED"
-                      else
-                        FILE_COPY_STATUS="FAILED"
-                      fi
-                      if wait_pod "$DBDUMP_POD" 1800; then
-                        DB_DUMP_STATUS="SUCCEEDED"
-                      else
-                        DB_DUMP_STATUS="FAILED"
-                      fi
-                      maintenance off
-                      MAINTENANCE_ON="no"
-                      log "Maintenance mode OFF - window was $(( $(date +%s) - T_ON ))s"
-                      capture_and_delete "$COPY_POD" "$RECV_POD"
-                    else
-                      FILE_COPY_STATUS="FAILED"
-                      log "Pass 1 failed - skipping maintenance mode (nothing to coordinate), dumping the DB on its own"
-                      capture_and_delete "$COPY_POD" "$RECV_POD"
-                      create_dbdump_pod
-                      if wait_pod "$DBDUMP_POD" 1800; then
-                        DB_DUMP_STATUS="SUCCEEDED"
-                      else
-                        DB_DUMP_STATUS="FAILED"
-                      fi
+                  SNAP_READY="no"
+                  elapsed=0
+                  while [ "$elapsed" -lt 120 ]; do
+                    ready=$(kubectl get volumesnapshot "$SNAPSHOT_NAME" -n "$NAMESPACE" -o jsonpath='{.status.readyToUse}' 2>/dev/null || echo "")
+                    if [ "$ready" = "true" ]; then
+                      SNAP_READY="yes"
+                      break
                     fi
-                  else
-                    FILE_COPY_STATUS="FAILED"
-                    log "Receiver did not become ready - skipping the file copy, dumping the DB on its own"
-                    capture_and_delete "$RECV_POD"
+                    sleep 3
+                    elapsed=$((elapsed + 3))
+                  done
+
+                  if [ "$SNAP_READY" = "yes" ]; then
+                    log "Snapshot ready - now dumping the DB, still inside the same maintenance window, for a matching consistent moment"
+                    kubectl apply -f - << EOF
+                  apiVersion: v1
+                  kind: PersistentVolumeClaim
+                  metadata:
+                    name: $DBDUMP_PVC
+                    namespace: $NAMESPACE
+                  spec:
+                    storageClassName: longhorn-general-single-replica
+                    accessModes:
+                      - ReadWriteOnce
+                    resources:
+                      requests:
+                        storage: {{ .Values.dbPvcSize }}
+                  EOF
+                    wait_pvc_bound "$DBDUMP_PVC" 60 || log "WARNING: dbdump PVC did not bind within 60s - dump pod will likely fail"
                     create_dbdump_pod
                     if wait_pod "$DBDUMP_POD" 1800; then
                       DB_DUMP_STATUS="SUCCEEDED"
                     else
                       DB_DUMP_STATUS="FAILED"
                     fi
+                  else
+                    log "Snapshot never became ready - skipping DB dump too, since it could no longer match a consistent file state"
                   fi
-                  capture_and_delete "$DBDUMP_POD"
+
+                  maintenance off
+                  MAINTENANCE_ON="no"
+                  log "Maintenance mode OFF - window was $(( $(date +%s) - T_ON ))s"
+                  capture_and_delete_pods "$DBDUMP_POD"
 
                   if [ "$DB_DUMP_STATUS" = "SUCCEEDED" ]; then
-                    log "DB: verifying the dump"
+                    log "DB: verifying the dump (app already back online)"
                     create_dbprocess_pod
-                    if wait_pod "$DBPROCESS_POD" 1800; then
+                    if wait_pod "$DBPROCESS_POD" 600; then
                       DB_PROCESS_STATUS="SUCCEEDED"
                     else
                       DB_PROCESS_STATUS="FAILED"
                     fi
-                    capture_and_delete "$DBPROCESS_POD"
+                    capture_and_delete_pods "$DBPROCESS_POD"
                   fi
 
-                  if [ "$FILE_COPY_STATUS" = "SUCCEEDED" ]; then
-                    log "PHASE 3: compress and verify from the local copy on rhea"
-                    create_fileprocess_pod
-                    if wait_pod "$FILEPROCESS_POD" 28800; then
-                      FILE_PROCESS_STATUS="SUCCEEDED"
+                  if [ "$DB_PROCESS_STATUS" = "SUCCEEDED" ]; then
+                    log "DB: encrypting and uploading the verified dump to both chains"
+                    create_dbupload_pod
+                    if wait_pod "$DBUPLOAD_POD" 7200; then
+                      DB_UPLOAD_STATUS="SUCCEEDED"
                     else
-                      FILE_PROCESS_STATUS="FAILED"
+                      DB_UPLOAD_STATUS="FAILED"
                     fi
-                    capture_and_delete "$FILEPROCESS_POD"
+                    capture_and_delete_pods "$DBUPLOAD_POD"
                   fi
+
+                  if [ "$SNAP_READY" != "yes" ]; then
+                    log "FATAL: snapshot never became ready - aborting file backup"
+                    FILE_STATUS="FAILED"
+                  else
+                    SIZED_WITH_HEADROOM=$(compute_sized_with_headroom)
+                    log "Live PVC size + 10% headroom = $SIZED_WITH_HEADROOM (used for both the clone and scratch PVCs)"
+
+                    kubectl apply -f - << EOF
+                  apiVersion: v1
+                  kind: PersistentVolumeClaim
+                  metadata:
+                    name: $CLONE_PVC
+                    namespace: $NAMESPACE
+                  spec:
+                    storageClassName: longhorn-slow-single-replica
+                    dataSource:
+                      name: $SNAPSHOT_NAME
+                      kind: VolumeSnapshot
+                      apiGroup: snapshot.storage.k8s.io
+                    accessModes:
+                      - ReadWriteOnce
+                    resources:
+                      requests:
+                        storage: $SIZED_WITH_HEADROOM
+                  EOF
+
+                    kubectl apply -f - << EOF
+                  apiVersion: v1
+                  kind: PersistentVolumeClaim
+                  metadata:
+                    name: $SCRATCH_PVC
+                    namespace: $NAMESPACE
+                  spec:
+                    storageClassName: longhorn-general-single-replica
+                    accessModes:
+                      - ReadWriteOnce
+                    resources:
+                      requests:
+                        storage: $SIZED_WITH_HEADROOM
+                  EOF
+
+                    if wait_pvc_bound "$CLONE_PVC" 120; then
+                      log "Clone PVC bound. Starting worker pod (this will wait for the full clone to complete before it can actually read /data - expect this to take a real while on the slow tier)"
+                      create_worker_pod
+                      if wait_pod "$WORKER_POD" 28800; then
+                        FILE_STATUS="SUCCEEDED"
+                      else
+                        FILE_STATUS="FAILED"
+                      fi
+                      capture_and_delete_pods "$WORKER_POD"
+                    else
+                      log "Clone PVC never bound - aborting file backup"
+                      FILE_STATUS="FAILED"
+                    fi
+                  fi
+
                   log "Backup run $RUN_ID finished"
           volumes:
             - name: notify-script
