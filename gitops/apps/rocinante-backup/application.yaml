@@ -15,10 +15,9 @@ spec:
         namespace: rocinante
         pvcName: rocinante-nextcloud-nextcloud
         pvcSize: 250Gi
-        storageClassName: longhorn-bulk
         schedule: "0 0 20 10 *"
+        uploadEnabled: true
         workerRunAsUser: 33
-        rsyncBwlimitKBps: 20000
   destination:
     server: https://kubernetes.default.svc
     namespace: rocinante
