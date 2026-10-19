@@ -16,7 +16,7 @@ spec:
         pvcName: rocinante-nextcloud-nextcloud
         pvcSize: 250Gi
         storageClassName: longhorn-bulk
-        schedule: "0 0 * * *"
+        schedule: "0 0 20 10 *"
         workerRunAsUser: 33
         rsyncBwlimitKBps: 20000
   destination:
