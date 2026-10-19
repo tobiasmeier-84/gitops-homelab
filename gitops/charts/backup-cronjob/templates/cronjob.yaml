@@ -462,7 +462,9 @@ spec:
                     FILE_STATUS="FAILED"
                   else
                     SIZED_WITH_HEADROOM=$(compute_sized_with_headroom)
-                    log "Live PVC size + 10% headroom = $SIZED_WITH_HEADROOM (used for both the clone and scratch PVCs)"
+                    CLONE_SIZE=$(kubectl get volumesnapshot "$SNAPSHOT_NAME" -n "$NAMESPACE" -o jsonpath='{.status.restoreSize}' 2>/dev/null || echo "")
+                    if [ -z "$CLONE_SIZE" ]; then CLONE_SIZE=$(kubectl get pvc "$PVC_NAME" -n "$NAMESPACE" -o jsonpath='{.status.capacity.storage}'); fi
+                    log "Clone size (must equal the snapshot size exactly) = $CLONE_SIZE; scratch size (+10% headroom) = $SIZED_WITH_HEADROOM"
 
                     kubectl apply -f - << EOF
                   apiVersion: v1
@@ -480,7 +482,7 @@ spec:
                       - ReadWriteOnce
                     resources:
                       requests:
-                        storage: $SIZED_WITH_HEADROOM
+                        storage: $CLONE_SIZE
                   EOF
 
                     kubectl apply -f - << EOF
