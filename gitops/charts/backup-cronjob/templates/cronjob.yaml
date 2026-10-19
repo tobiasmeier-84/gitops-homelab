@@ -49,6 +49,8 @@ spec:
                   value: "{{ .Values.dbHost }}"
                 - name: DB_PORT
                   value: "{{ .Values.dbPort }}"
+              - name: UPLOAD_ENABLED
+                value: "{{ .Values.uploadEnabled }}"
               envFrom:
                 - secretRef:
                     name: backup-chain-credentials
@@ -342,6 +344,8 @@ spec:
                             value: "$APP_NAME"
                           - name: RUN_ID
                             value: "$RUN_ID"
+                          - name: UPLOAD_ENABLED
+                            value: "$UPLOAD_ENABLED"
                         command: ["/bin/sh", "/scripts/backup-worker.sh"]
                         volumeMounts:
                           - name: clone-data
@@ -439,7 +443,7 @@ spec:
                     capture_and_delete_pods "$DBPROCESS_POD"
                   fi
 
-                  if [ "$DB_PROCESS_STATUS" = "SUCCEEDED" ]; then
+                  if [ "$DB_PROCESS_STATUS" = "SUCCEEDED" ] && [ "$UPLOAD_ENABLED" = "true" ]; then
                     log "DB: encrypting and uploading the verified dump to both chains"
                     create_dbupload_pod
                     if wait_pod "$DBUPLOAD_POD" 7200; then
@@ -448,6 +452,9 @@ spec:
                       DB_UPLOAD_STATUS="FAILED"
                     fi
                     capture_and_delete_pods "$DBUPLOAD_POD"
+                  elif [ "$DB_PROCESS_STATUS" = "SUCCEEDED" ]; then
+                    log "TEST MODE (uploadEnabled=false): dump verified, upload skipped"
+                    DB_UPLOAD_STATUS="SKIPPED_TEST_MODE"
                   fi
 
                   if [ "$SNAP_READY" != "yes" ]; then
@@ -495,7 +502,7 @@ spec:
                       log "Clone PVC bound. Starting worker pod (this will wait for the full clone to complete before it can actually read /data - expect this to take a real while on the slow tier)"
                       create_worker_pod
                       if wait_pod "$WORKER_POD" 28800; then
-                        FILE_STATUS="SUCCEEDED"
+                        if [ "$UPLOAD_ENABLED" = "true" ]; then FILE_STATUS="SUCCEEDED"; else FILE_STATUS="VERIFIED_UPLOAD_SKIPPED"; fi
                       else
                         FILE_STATUS="FAILED"
                       fi

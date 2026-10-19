@@ -51,6 +51,12 @@ data:
     #   exit 1
     # fi
 
+    if [ "$UPLOAD_ENABLED" != "true" ]; then
+      echo "TEST MODE (uploadEnabled=false): archive built and verified ($ARCHIVE_SIZE bytes). Skipping encryption, upload, key storage and pruning."
+      rm -f "$ARCHIVE"
+      exit 0
+    fi
+
     echo "=== Chain A: encrypt, upload, store key, prune ==="
     "$AGE_KEYGEN" -o /tmp/chain-a.key 2>/tmp/chain-a-pub.txt
     CHAIN_A_PUBKEY=$(grep "Public key:" /tmp/chain-a-pub.txt | awk '{print $NF}')
