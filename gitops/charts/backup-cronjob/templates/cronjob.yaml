@@ -503,7 +503,7 @@ spec:
                     if wait_pvc_bound "$CLONE_PVC" 120; then
                       log "Clone PVC bound. Starting worker pod (this will wait for the full clone to complete before it can actually read /data - expect this to take a real while on the slow tier)"
                       create_worker_pod
-                      if wait_pod "$WORKER_POD" 28800; then
+                      if wait_pod "$WORKER_POD" 57600; then
                         if [ "$UPLOAD_ENABLED" = "true" ]; then FILE_STATUS="SUCCEEDED"; else FILE_STATUS="VERIFIED_UPLOAD_SKIPPED"; fi
                       else
                         FILE_STATUS="FAILED"
@@ -515,6 +515,7 @@ spec:
                     fi
                   fi
 
+                  log "RESULT - Files: ${FILE_STATUS} | Database: dump=${DB_DUMP_STATUS} process=${DB_PROCESS_STATUS} upload=${DB_UPLOAD_STATUS}"
                   log "Backup run $RUN_ID finished"
           volumes:
             - name: notify-script
