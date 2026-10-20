@@ -4,6 +4,306 @@ metadata:
   name: backup-worker-script
   namespace: {{ .Values.namespace }}
 data:
+  chain-lib.sh: |
+    #!/bin/sh
+    # Shared by backup-worker.sh, dbupload.sh and selftest.sh (sourced, never run directly).
+    #
+    # Contract: a chain is only reported OK when the object is uploaded AND its size is
+    # verified AND its decryption key is stored AND read back identically. Anything less
+    # removes the half-finished object again. Pruning only ever runs after a chain is fully OK,
+    # so a broken run can never cost us an older, restorable backup.
+    # Note: functions called from an `if` run with `set -e` disabled, so every step here
+    # checks its own result explicitly.
+
+    AWS="/tmp/pkgroot/usr/bin/aws"
+    AWS_PY="/tmp/pkgroot/usr/bin/python3"
+    AGE="/tmp/pkgroot/usr/bin/age"
+    AGE_KEYGEN="/tmp/pkgroot/usr/bin/age-keygen"
+    UNZIP="/tmp/pkgroot/usr/bin/unzip"
+    CURL="/tmp/pkgroot/usr/bin/curl"
+    JQ="/tmp/pkgroot/usr/bin/jq"
+    export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
+    export HOME=/tmp   # bws and aws want a writable home (state/config files)
+
+    # TLS: verify certificates (no more curl -k). Prefer the bundle from the alternate root.
+    CA_BUNDLE="/tmp/pkgroot/etc/ssl/certs/ca-certificates.crt"
+    [ -s "$CA_BUNDLE" ] || CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
+    [ -s "$CA_BUNDLE" ] || { echo "FATAL: no CA bundle found - refusing to talk to vaults without TLS verification" >&2; exit 1; }
+
+    OVH_EP="https://s3.eu-west-par.io.cloud.ovh.net"
+    B2_EP="https://s3.eu-central-003.backblazeb2.com"
+    BUCKET_A="scopuli-chain-a-backup"
+    BUCKET_B="barbapiccola-chain-b-backup"
+    KV_URL="https://kv-solsys-chainb.vault.azure.net"
+    BWS_URL="https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-x86_64-unknown-linux-musl-2.1.0.zip"
+    BWS_ZIP_SHA256="f59ee150e42b82128d437087e9bac920053c6bfddcb960d20ce9386e5ac9bba6"
+
+    curl_ca() { "$CURL" --cacert "$CA_BUNDLE" -sS --retry 3 --retry-delay 2 "$@"; }
+
+    # ---------------------------------------------------------------- generic S3 helpers
+    # Arguments are always: bucket endpoint ...
+
+    # Streams age(infile) into S3. --expected-size is REQUIRED for streams over ~50 GB:
+    # without it the CLI uses 8 MB parts and dies at the 10000-part limit (~80 GB).
+    # The +2% +1 MiB covers the age header/chunk overhead; EXPECTED_SIZE_OVERRIDE is for the selftest.
+    s3_put_encrypted() { # bucket endpoint recipient infile key
+      _size=$(stat -c%s "$4")
+      _expected=${EXPECTED_SIZE_OVERRIDE:-$(( _size + _size / 50 + 1048576 ))}
+      "$AGE" -r "$3" "$4" | "$AWS_PY" "$AWS" s3 cp - "s3://$1/$5" --endpoint-url "$2" --expected-size "$_expected"
+    }
+
+    s3_verify_size() { # bucket endpoint key min_bytes_exclusive
+      _len=$("$AWS_PY" "$AWS" s3api head-object --bucket "$1" --key "$3" --endpoint-url "$2" --query ContentLength --output text) || return 1
+      echo "  remote object $3: $_len bytes"
+      [ "$_len" -gt "$4" ]
+    }
+
+    s3_remove() { # bucket endpoint key
+      "$AWS_PY" "$AWS" s3 rm "s3://$1/$3" --endpoint-url "$2"
+    }
+
+    abort_mpu() { # bucket endpoint key  (best effort: abort dangling multipart uploads)
+      "$AWS_PY" "$AWS" s3api list-multipart-uploads --bucket "$1" --endpoint-url "$2" --prefix "$3" \
+        --query 'Uploads[].[Key,UploadId]' --output text 2>/dev/null | while read -r _k _u; do
+        if [ -n "$_u" ] && [ "$_u" != "None" ]; then
+          "$AWS_PY" "$AWS" s3api abort-multipart-upload --bucket "$1" --key "$_k" --upload-id "$_u" --endpoint-url "$2" || true
+        fi
+      done
+      return 0
+    }
+
+    # ---------------------------------------------------------------- Azure Key Vault (Chain A keys)
+    az_token() {
+      curl_ca -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
+        --data-urlencode "grant_type=client_credentials" \
+        --data-urlencode "client_id=${AZURE_CLIENT_ID}" \
+        --data-urlencode "client_secret=${AZURE_CLIENT_SECRET}" \
+        --data-urlencode "scope=https://vault.azure.net/.default" \
+        -o /tmp/az-token.json || { echo "Azure: token request failed (network/TLS)" >&2; return 1; }
+      _t=$("$JQ" -r '.access_token // empty' /tmp/az-token.json)
+      if [ -z "$_t" ]; then
+        echo "Azure: no access token: $("$JQ" -r '.error_description // .error // "unknown"' /tmp/az-token.json | head -c 300)" >&2
+        rm -f /tmp/az-token.json
+        return 1
+      fi
+      rm -f /tmp/az-token.json
+      printf '%s' "$_t"
+    }
+
+    az_put_secret() { # name value
+      _tok=$(az_token) || return 1
+      # JSON is built by jq: the age key file contains newlines and must be escaped properly.
+      "$JQ" -n --arg v "$2" '{value:$v}' > /tmp/az-body.json || return 1
+      _code=$(curl_ca -o /tmp/az-resp.json -w '%{http_code}' -X PUT "${KV_URL}/secrets/$1?api-version=7.4" \
+        -H "Authorization: Bearer ${_tok}" -H "Content-Type: application/json" -d @/tmp/az-body.json) || _code="000"
+      rm -f /tmp/az-body.json
+      echo "Azure Key Vault store ($1): HTTP ${_code}"
+      case "$_code" in
+        2??) return 0 ;;
+        *) echo "  response: $(head -c 400 /tmp/az-resp.json 2>/dev/null)"; return 1 ;;
+      esac
+    }
+
+    az_get_secret() { # name -> prints value
+      _tok=$(az_token) || return 1
+      curl_ca -X GET "${KV_URL}/secrets/$1?api-version=7.4" -H "Authorization: Bearer ${_tok}" -o /tmp/az-get.json || return 1
+      "$JQ" -r '.value // empty' /tmp/az-get.json
+    }
+
+    az_delete_secret() { # name
+      _tok=$(az_token) || { echo "  WARNING: Azure token failed, secret $1 NOT deleted"; return 1; }
+      _c1=$(curl_ca -o /dev/null -w '%{http_code}' -X DELETE "${KV_URL}/secrets/$1?api-version=7.4" -H "Authorization: Bearer ${_tok}") || _c1=000
+      sleep 2
+      _c2=$(curl_ca -o /dev/null -w '%{http_code}' -X DELETE "${KV_URL}/deletedsecrets/$1?api-version=7.4" -H "Authorization: Bearer ${_tok}") || _c2=000
+      echo "  Azure secret $1: delete HTTP ${_c1}, purge HTTP ${_c2}"
+    }
+
+    # ---------------------------------------------------------------- Bitwarden Secrets Manager (Chain B keys)
+    bws_init() {
+      export BWS_SERVER_URL="https://vault.bitwarden.eu"
+      export BWS_ACCESS_TOKEN="$BW_ACCESS_TOKEN"
+      [ -x /tmp/bws ] && return 0
+      curl_ca -L "$BWS_URL" -o /tmp/bws.zip || { echo "bws: download failed"; return 1; }
+      echo "$BWS_ZIP_SHA256  /tmp/bws.zip" | sha256sum -c - >/dev/null || { echo "bws: CHECKSUM MISMATCH - refusing to run a binary that does not match the pinned hash"; return 1; }
+      "$UNZIP" -o /tmp/bws.zip -d /tmp >/dev/null || return 1
+      chmod +x /tmp/bws
+    }
+
+    bws_put_secret() { # name value
+      /tmp/bws secret create "$1" "$2" "$BW_PROJECT_ID" > /dev/null || { echo "Bitwarden: secret create FAILED ($1)"; return 1; }
+      _id=$(/tmp/bws secret list "$BW_PROJECT_ID" | "$JQ" -r --arg k "$1" '.[] | select(.key==$k) | .id') || _id=""
+      [ -n "$_id" ] || { echo "Bitwarden: secret $1 not found after create"; return 1; }
+      echo "Bitwarden secret stored ($1): $_id"
+    }
+
+    bws_get_secret() { # name -> prints value
+      /tmp/bws secret list "$BW_PROJECT_ID" | "$JQ" -r --arg k "$1" '.[] | select(.key==$k) | .value'
+    }
+
+    bws_delete_secret() { # name
+      _id=$(/tmp/bws secret list "$BW_PROJECT_ID" | "$JQ" -r --arg k "$1" '.[] | select(.key==$k) | .id') || _id=""
+      if [ -n "$_id" ]; then
+        /tmp/bws secret delete "$_id" > /dev/null && echo "  deleted Bitwarden secret $_id"
+      else
+        echo "  WARNING: no Bitwarden secret named $1"
+      fi
+    }
+
+    # Versioned bucket: delete every version and every delete marker of one exact key.
+    b2_purge_key() { # key
+      for _kind in Versions DeleteMarkers; do
+        "$AWS_PY" "$AWS" s3api list-object-versions --bucket "$BUCKET_B" --prefix "$1" --endpoint-url "$B2_EP" \
+          --query "{Objects: ${_kind}[].{Key:Key,VersionId:VersionId}}" --output json > /tmp/del.json || continue
+        if [ "$("$JQ" '(.Objects // []) | length' /tmp/del.json)" -gt 0 ]; then
+          "$AWS_PY" "$AWS" s3api delete-objects --bucket "$BUCKET_B" --endpoint-url "$B2_EP" --delete file:///tmp/del.json > /dev/null
+        fi
+      done
+    }
+
+    # ---------------------------------------------------------------- Chain A: OVH Object Storage + Azure Key Vault
+    chain_a_env() { export AWS_ACCESS_KEY_ID="$OVH_S3_ACCESS_KEY"; export AWS_SECRET_ACCESS_KEY="$OVH_S3_SECRET_KEY"; }
+
+    chain_a_discard() { # name
+      abort_mpu "$BUCKET_A" "$OVH_EP" "$1.age"
+      s3_remove "$BUCKET_A" "$OVH_EP" "$1.age" > /dev/null 2>&1 || true
+    }
+
+    chain_a_store() { # infile name
+      chain_a_env
+      _kf="/tmp/chain-a.key"
+      "$AGE_KEYGEN" -o "$_kf" 2>/tmp/chain-a-pub.txt || { echo "Chain A: age-keygen failed"; return 1; }
+      _pub=$(grep "Public key:" /tmp/chain-a-pub.txt | awk '{print $NF}')
+      _priv=$(cat "$_kf")
+      [ -n "$_pub" ] && [ -n "$_priv" ] || { echo "Chain A: no key material generated"; return 1; }
+      echo "Chain A: encrypting and uploading $2.age"
+      if ! s3_put_encrypted "$BUCKET_A" "$OVH_EP" "$_pub" "$1" "$2.age"; then
+        echo "Chain A: UPLOAD FAILED"
+        chain_a_discard "$2"; rm -f "$_kf"; return 1
+      fi
+      if ! s3_verify_size "$BUCKET_A" "$OVH_EP" "$2.age" "$(stat -c%s "$1")"; then
+        echo "Chain A: remote object missing or too small"
+        chain_a_discard "$2"; rm -f "$_kf"; return 1
+      fi
+      if ! az_put_secret "$2" "$_priv"; then
+        echo "Chain A: KEY STORE FAILED - removing the undecryptable object so it is never counted as a backup"
+        chain_a_discard "$2"; rm -f "$_kf"; return 1
+      fi
+      _back=$(az_get_secret "$2") || _back=""
+      if [ "$_back" != "$_priv" ]; then
+        echo "Chain A: key read-back MISMATCH"
+        chain_a_discard "$2"; rm -f "$_kf"; return 1
+      fi
+      rm -f "$_kf"
+      echo "Chain A: OK - $2.age uploaded, verified, key stored and read back"
+    }
+
+    chain_a_fetch() { # name outfile   (download + decrypt, used by the selftest and as the restore recipe)
+      chain_a_env
+      _k=$(az_get_secret "$1") || return 1
+      [ -n "$_k" ] || return 1
+      printf '%s\n' "$_k" > /tmp/restore-a.key
+      "$AWS_PY" "$AWS" s3 cp "s3://$BUCKET_A/$1.age" - --endpoint-url "$OVH_EP" | "$AGE" -d -i /tmp/restore-a.key > "$2" || { rm -f /tmp/restore-a.key; return 1; }
+      rm -f /tmp/restore-a.key
+    }
+
+    chain_a_delete() { # name
+      chain_a_env
+      s3_remove "$BUCKET_A" "$OVH_EP" "$1.age" || echo "  WARNING: could not delete Chain A object $1.age"
+      az_delete_secret "$1" || true
+    }
+
+    chain_a_prune() { # name_regex  (keeps the 2 newest)
+      chain_a_env
+      echo "Pruning Chain A (keeping 2 most recent matching $1; plain delete is permanent on this bucket)..."
+      _old=$("$AWS_PY" "$AWS" s3 ls "s3://$BUCKET_A/" --endpoint-url "$OVH_EP" | awk '{print $4}' | grep -E "$1" | sort -r | tail -n +3) || true
+      for _blob in $_old; do
+        _n="${_blob%.age}"
+        echo "Deleting old Chain A blob: $_blob"
+        s3_remove "$BUCKET_A" "$OVH_EP" "$_blob" || echo "  WARNING: delete of $_blob failed"
+        az_delete_secret "$_n" || true
+      done
+      return 0
+    }
+
+    # ---------------------------------------------------------------- Chain B: Backblaze B2 + Bitwarden Secrets Manager
+    chain_b_env() { export AWS_ACCESS_KEY_ID="$B2_KEY_ID"; export AWS_SECRET_ACCESS_KEY="$B2_KEY_SECRET"; }
+
+    chain_b_discard() { # name
+      abort_mpu "$BUCKET_B" "$B2_EP" "$1.age"
+      b2_purge_key "$1.age" > /dev/null 2>&1 || true
+    }
+
+    chain_b_store() { # infile name
+      chain_b_env
+      bws_init || { echo "Chain B: Bitwarden client unavailable"; return 1; }
+      _kf="/tmp/chain-b.key"
+      "$AGE_KEYGEN" -o "$_kf" 2>/tmp/chain-b-pub.txt || { echo "Chain B: age-keygen failed"; return 1; }
+      _pub=$(grep "Public key:" /tmp/chain-b-pub.txt | awk '{print $NF}')
+      _priv=$(cat "$_kf")
+      [ -n "$_pub" ] && [ -n "$_priv" ] || { echo "Chain B: no key material generated"; return 1; }
+      echo "Chain B: encrypting and uploading $2.age"
+      if ! s3_put_encrypted "$BUCKET_B" "$B2_EP" "$_pub" "$1" "$2.age"; then
+        echo "Chain B: UPLOAD FAILED"
+        chain_b_discard "$2"; rm -f "$_kf"; return 1
+      fi
+      if ! s3_verify_size "$BUCKET_B" "$B2_EP" "$2.age" "$(stat -c%s "$1")"; then
+        echo "Chain B: remote object missing or too small"
+        chain_b_discard "$2"; rm -f "$_kf"; return 1
+      fi
+      if ! bws_put_secret "$2" "$_priv"; then
+        echo "Chain B: KEY STORE FAILED - removing the undecryptable object so it is never counted as a backup"
+        chain_b_discard "$2"; rm -f "$_kf"; return 1
+      fi
+      _back=$(bws_get_secret "$2") || _back=""
+      if [ "$_back" != "$_priv" ]; then
+        echo "Chain B: key read-back MISMATCH"
+        chain_b_discard "$2"; rm -f "$_kf"; return 1
+      fi
+      rm -f "$_kf"
+      echo "Chain B: OK - $2.age uploaded, verified, key stored and read back"
+    }
+
+    chain_b_fetch() { # name outfile
+      chain_b_env
+      bws_init || return 1
+      _k=$(bws_get_secret "$1") || return 1
+      [ -n "$_k" ] || return 1
+      printf '%s\n' "$_k" > /tmp/restore-b.key
+      "$AWS_PY" "$AWS" s3 cp "s3://$BUCKET_B/$1.age" - --endpoint-url "$B2_EP" | "$AGE" -d -i /tmp/restore-b.key > "$2" || { rm -f /tmp/restore-b.key; return 1; }
+      rm -f /tmp/restore-b.key
+    }
+
+    chain_b_delete() { # name
+      chain_b_env
+      bws_init || return 1
+      b2_purge_key "$1.age" || echo "  WARNING: could not purge Chain B object $1.age"
+      bws_delete_secret "$1" || true
+    }
+
+    chain_b_prune() { # name_regex  (keeps the 2 newest)
+      chain_b_env
+      bws_init || { echo "WARNING: Chain B prune skipped (bws unavailable)"; return 0; }
+      echo "Pruning Chain B (keeping 2 most recent matching $1; versioned bucket, so all versions and markers go)..."
+      _old=$("$AWS_PY" "$AWS" s3 ls "s3://$BUCKET_B/" --endpoint-url "$B2_EP" | awk '{print $4}' | grep -E "$1" | sort -r | tail -n +3) || true
+      for _blob in $_old; do
+        _n="${_blob%.age}"
+        echo "Deleting old Chain B blob (all versions + markers): $_blob"
+        b2_purge_key "$_blob" || echo "  WARNING: purge of $_blob failed"
+        bws_delete_secret "$_n" || true
+      done
+      return 0
+    }
+
+    # ---------------------------------------------------------------- both chains
+    # Each chain is independent: a failure in A does not stop B. Pruning happens per chain,
+    # and only for a chain that finished completely OK. Returns non-zero if either chain failed.
+    upload_both() { # infile name prune_regex
+      A_RESULT=FAILED; B_RESULT=FAILED
+      if chain_a_store "$1" "$2"; then A_RESULT=OK; chain_a_prune "$3"; fi
+      if chain_b_store "$1" "$2"; then B_RESULT=OK; chain_b_prune "$3"; fi
+      echo "CHAIN RESULT - A: ${A_RESULT} | B: ${B_RESULT}"
+      [ "$A_RESULT" = "OK" ] && [ "$B_RESULT" = "OK" ]
+    }
   backup-worker.sh: |
     #!/bin/sh
     set -e
@@ -13,23 +313,11 @@ data:
     mkdir -p /tmp/pkgroot
     apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age zstd aws-cli unzip curl jq || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
     export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
-
-    AWS="/tmp/pkgroot/usr/bin/aws"
-    AWS_PY="/tmp/pkgroot/usr/bin/python3"
-    AGE="/tmp/pkgroot/usr/bin/age"
-    AGE_KEYGEN="/tmp/pkgroot/usr/bin/age-keygen"
     ZSTD="/tmp/pkgroot/usr/bin/zstd"
-    UNZIP="/tmp/pkgroot/usr/bin/unzip"
-    CURL="/tmp/pkgroot/usr/bin/curl"
-    CURL_OPTS="-k"
-    JQ="/tmp/pkgroot/usr/bin/jq"
 
-    #ARCHIVE="/scratch/${APP_NAME}-${RUN_ID}.tar.zst"
     ARCHIVE="/scratch/${APP_NAME}-${RUN_ID}.tar.zst"
     echo "Compressing /data to scratch volume..."
-    # echo "Copy /data to scratch volume..."
     tar -C /data -cf - . | "$ZSTD" -T4 -o "$ARCHIVE"
-    # tar -C /data -cf "$ARCHIVE" .
 
     echo "Verifying compressed archive is genuinely substantial..."
     ARCHIVE_SIZE=$(stat -c%s "$ARCHIVE" 2>/dev/null || wc -c < "$ARCHIVE")
@@ -45,11 +333,6 @@ data:
       echo "FATAL: archive failed zstd integrity check — corrupt or truncated. Aborting before any upload."
       exit 1
     fi
-    # echo "Verifying archive is a valid, complete tar stream..."
-    # if ! tar -tf "$ARCHIVE" > /dev/null; then
-    #   echo "FATAL: archive failed tar integrity check — corrupt or truncated. Aborting before any upload."
-    #   exit 1
-    # fi
 
     if [ "$UPLOAD_ENABLED" != "true" ]; then
       echo "TEST MODE (uploadEnabled=false): archive built and verified ($ARCHIVE_SIZE bytes). Skipping encryption, upload, key storage and pruning."
@@ -57,90 +340,14 @@ data:
       exit 0
     fi
 
-    echo "=== Chain A: encrypt, upload, store key, prune ==="
-    "$AGE_KEYGEN" -o /tmp/chain-a.key 2>/tmp/chain-a-pub.txt
-    CHAIN_A_PUBKEY=$(grep "Public key:" /tmp/chain-a-pub.txt | awk '{print $NF}')
-    CHAIN_A_PRIVKEY=$(cat /tmp/chain-a.key)
-
-    export AWS_ACCESS_KEY_ID="$OVH_S3_ACCESS_KEY"
-    export AWS_SECRET_ACCESS_KEY="$OVH_S3_SECRET_KEY"
-    "$AGE" -r "$CHAIN_A_PUBKEY" "$ARCHIVE" | "$AWS_PY" "$AWS" s3 cp - "s3://scopuli-chain-a-backup/${APP_NAME}-${RUN_ID}.age" \
-      --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net
-
-    AZ_TOKEN=$($CURL $CURL_OPTS -s -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
-      -d "grant_type=client_credentials&client_id=${AZURE_CLIENT_ID}&client_secret=${AZURE_CLIENT_SECRET}&scope=https://vault.azure.net/.default" \
-      | "$JQ" -r '.access_token')
-    $CURL $CURL_OPTS -s -X PUT "https://kv-solsys-chainb.vault.azure.net/secrets/${APP_NAME}-${RUN_ID}?api-version=7.4" \
-      -H "Authorization: Bearer $AZ_TOKEN" -H "Content-Type: application/json" \
-      -d "{\"value\":\"$CHAIN_A_PRIVKEY\"}" -o /dev/null -w "Azure Key Vault store: HTTP %{http_code}\n"
-
-    echo "Pruning Chain A (OVHcloud, keeping 2 most recent — no versioning on this bucket, plain delete is permanent)..."
-    CHAIN_A_OLD=$("$AWS_PY" "$AWS" s3 ls "s3://scopuli-chain-a-backup/" --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net \
-      | awk '{print $4}' | grep -E "^${APP_NAME}-[0-9]" | sort -r | tail -n +3)
-    for OLD_BLOB in $CHAIN_A_OLD; do
-      OLD_RUN_ID=$(echo "$OLD_BLOB" | sed "s/^${APP_NAME}-//;s/\.age$//")
-      echo "Deleting old Chain A blob: $OLD_BLOB (run_id: $OLD_RUN_ID)"
-      "$AWS_PY" "$AWS" s3 rm "s3://scopuli-chain-a-backup/${OLD_BLOB}" --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net
-      echo "Deleting corresponding Azure Key Vault secret: ${APP_NAME}-${OLD_RUN_ID}"
-      AZ_TOKEN=$($CURL $CURL_OPTS -s -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
-        -d "grant_type=client_credentials&client_id=${AZURE_CLIENT_ID}&client_secret=${AZURE_CLIENT_SECRET}&scope=https://vault.azure.net/.default" \
-        | "$JQ" -r '.access_token')
-      $CURL $CURL_OPTS -s -X DELETE "https://kv-solsys-chainb.vault.azure.net/secrets/${APP_NAME}-${OLD_RUN_ID}?api-version=7.4" \
-        -H "Authorization: Bearer $AZ_TOKEN" -o /dev/null -w "  delete: HTTP %{http_code}\n"
-      $CURL $CURL_OPTS -s -X DELETE "https://kv-solsys-chainb.vault.azure.net/deletedsecrets/${APP_NAME}-${OLD_RUN_ID}?api-version=7.4" \
-        -H "Authorization: Bearer $AZ_TOKEN" -o /dev/null -w "  purge: HTTP %{http_code}\n"
-    done
-
-    echo "=== Chain B: encrypt, upload, store key, prune ==="
-    "$AGE_KEYGEN" -o /tmp/chain-b.key 2>/tmp/chain-b-pub.txt
-    CHAIN_B_PUBKEY=$(grep "Public key:" /tmp/chain-b-pub.txt | awk '{print $NF}')
-    CHAIN_B_PRIVKEY=$(cat /tmp/chain-b.key)
-
-    export AWS_ACCESS_KEY_ID="$B2_KEY_ID"
-    export AWS_SECRET_ACCESS_KEY="$B2_KEY_SECRET"
-    "$AGE" -r "$CHAIN_B_PUBKEY" "$ARCHIVE" | "$AWS_PY" "$AWS" s3 cp - "s3://barbapiccola-chain-b-backup/${APP_NAME}-${RUN_ID}.age" \
-      --endpoint-url https://s3.eu-central-003.backblazeb2.com
-
-    $CURL $CURL_OPTS -sL https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-x86_64-unknown-linux-musl-2.1.0.zip -o /tmp/bws.zip
-    "$UNZIP" -o /tmp/bws.zip -d /tmp
-    export BWS_SERVER_URL="https://vault.bitwarden.eu"
-    /tmp/bws secret create --access-token "$BW_ACCESS_TOKEN" "${APP_NAME}-${RUN_ID}" "$CHAIN_B_PRIVKEY" "$BW_PROJECT_ID" > /dev/null
-
-    echo "Pruning Chain B (Backblaze, keeping 2 most recent — this bucket has versioning enabled, must delete ALL versions + delete markers explicitly or storage silently accumulates)..."
-    CHAIN_B_OLD=$("$AWS_PY" "$AWS" s3 ls "s3://barbapiccola-chain-b-backup/" --endpoint-url https://s3.eu-central-003.backblazeb2.com \
-      | awk '{print $4}' | grep -E "^${APP_NAME}-[0-9]" | sort -r | tail -n +3)
-    for OLD_BLOB in $CHAIN_B_OLD; do
-      OLD_RUN_ID=$(echo "$OLD_BLOB" | sed "s/^${APP_NAME}-//;s/\.age$//")
-      echo "Deleting old Chain B blob (all versions + markers): $OLD_BLOB"
-
-      "$AWS_PY" "$AWS" s3api list-object-versions --bucket barbapiccola-chain-b-backup --prefix "$OLD_BLOB" \
-        --endpoint-url https://s3.eu-central-003.backblazeb2.com \
-        --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json > /tmp/del-versions.json
-      if [ "$("$JQ" '.Objects | length' /tmp/del-versions.json)" -gt 0 ]; then
-        "$AWS_PY" "$AWS" s3api delete-objects --bucket barbapiccola-chain-b-backup \
-          --endpoint-url https://s3.eu-central-003.backblazeb2.com --delete file:///tmp/del-versions.json
-      fi
-
-      "$AWS_PY" "$AWS" s3api list-object-versions --bucket barbapiccola-chain-b-backup --prefix "$OLD_BLOB" \
-        --endpoint-url https://s3.eu-central-003.backblazeb2.com \
-        --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' --output json > /tmp/del-markers.json
-      if [ "$("$JQ" '.Objects | length' /tmp/del-markers.json)" -gt 0 ]; then
-        "$AWS_PY" "$AWS" s3api delete-objects --bucket barbapiccola-chain-b-backup \
-          --endpoint-url https://s3.eu-central-003.backblazeb2.com --delete file:///tmp/del-markers.json
-      fi
-
-      OLD_SECRET_ID=$(/tmp/bws secret list "$BW_PROJECT_ID" --access-token "$BW_ACCESS_TOKEN" \
-        | "$JQ" -r ".[] | select(.key==\"${APP_NAME}-${OLD_RUN_ID}\") | .id")
-      if [ -n "$OLD_SECRET_ID" ]; then
-        /tmp/bws secret delete "$OLD_SECRET_ID" --access-token "$BW_ACCESS_TOKEN" > /dev/null
-        echo "  deleted secret $OLD_SECRET_ID"
-      else
-        echo "  WARNING: could not find matching Bitwarden secret for ${APP_NAME}-${OLD_RUN_ID}"
-      fi
-    done
-
-    rm -f "$ARCHIVE"
-    echo "Backup run $RUN_ID complete."
+    . /scripts/chain-lib.sh
+    if upload_both "$ARCHIVE" "${APP_NAME}-${RUN_ID}" "^${APP_NAME}-[0-9]"; then
+      rm -f "$ARCHIVE"
+      echo "Backup run $RUN_ID complete."
+    else
+      echo "FATAL: at least one chain failed - see CHAIN RESULT above."
+      exit 1
+    fi
   dbupload.sh: |
     #!/bin/sh
     set -e
@@ -150,19 +357,10 @@ data:
     mkdir -p /tmp/pkgroot
     apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age aws-cli unzip curl jq || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
     export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
-
-    AWS="/tmp/pkgroot/usr/bin/aws"
-    AWS_PY="/tmp/pkgroot/usr/bin/python3"
-    AGE="/tmp/pkgroot/usr/bin/age"
-    AGE_KEYGEN="/tmp/pkgroot/usr/bin/age-keygen"
-    UNZIP="/tmp/pkgroot/usr/bin/unzip"
-    CURL="/tmp/pkgroot/usr/bin/curl"
-    CURL_OPTS="-k"
-    JQ="/tmp/pkgroot/usr/bin/jq"
+    . /scripts/chain-lib.sh
 
     DUMP="/dbdump/db/dump.sql"
     NAME="${APP_NAME}-db-${RUN_ID}"
-    PREFIX="${APP_NAME}-db-"
 
     if [ ! -s "$DUMP" ]; then
       echo "FATAL: no dump file at $DUMP - nothing to upload."
@@ -170,85 +368,52 @@ data:
     fi
     echo "Dump size: $(stat -c%s "$DUMP") bytes"
 
-    echo "=== Chain A: encrypt, upload, store key, prune ==="
-    "$AGE_KEYGEN" -o /tmp/chain-a.key 2>/tmp/chain-a-pub.txt
-    CHAIN_A_PUBKEY=$(grep "Public key:" /tmp/chain-a-pub.txt | awk '{print $NF}')
-    CHAIN_A_PRIVKEY=$(cat /tmp/chain-a.key)
+    if upload_both "$DUMP" "$NAME" "^${APP_NAME}-db-"; then
+      echo "DB backup $RUN_ID uploaded to both chains (verified) and pruned."
+    else
+      echo "FATAL: at least one chain failed - see CHAIN RESULT above."
+      exit 1
+    fi
+  selftest.sh: |
+    #!/bin/sh
+    # One-off end-to-end check of the upload path, no cluster data involved:
+    # random file -> encrypt -> upload -> store key -> read key back -> download -> decrypt -> compare.
+    # Uses --expected-size as for a 120 GB stream, so the large-file code path is exercised too.
+    set -e
+    set -o pipefail
 
-    export AWS_ACCESS_KEY_ID="$OVH_S3_ACCESS_KEY"
-    export AWS_SECRET_ACCESS_KEY="$OVH_S3_SECRET_KEY"
-    "$AGE" -r "$CHAIN_A_PUBKEY" "$DUMP" | "$AWS_PY" "$AWS" s3 cp - "s3://scopuli-chain-a-backup/${NAME}.age" \
-      --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net
+    echo "Installing age, aws-cli, unzip, curl, jq into alternate root..."
+    mkdir -p /tmp/pkgroot
+    apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age aws-cli unzip curl jq || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
+    export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
+    . /scripts/chain-lib.sh
 
-    AZ_TOKEN=$($CURL $CURL_OPTS -s -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
-      -d "grant_type=client_credentials&client_id=${AZURE_CLIENT_ID}&client_secret=${AZURE_CLIENT_SECRET}&scope=https://vault.azure.net/.default" \
-      | "$JQ" -r '.access_token')
-    $CURL $CURL_OPTS -s -X PUT "https://kv-solsys-chainb.vault.azure.net/secrets/${NAME}?api-version=7.4" \
-      -H "Authorization: Bearer $AZ_TOKEN" -H "Content-Type: application/json" \
-      -d "{\"value\":\"$CHAIN_A_PRIVKEY\"}" -o /dev/null -w "Azure Key Vault store: HTTP %{http_code}\n"
+    NAME="selftest-$(date +%Y%m%d-%H%M%S)"
+    SIZE_MB="${SELFTEST_MB:-1024}"
+    echo "Generating ${SIZE_MB} MiB of random data..."
+    dd if=/dev/urandom of=/tmp/selftest.bin bs=1M count="$SIZE_MB" 2>/dev/null
+    ORIG=$(sha256sum /tmp/selftest.bin | awk '{print $1}')
+    export EXPECTED_SIZE_OVERRIDE=120000000000
 
-    echo "Pruning Chain A DB backups (keeping 2 most recent)..."
-    CHAIN_A_OLD=$("$AWS_PY" "$AWS" s3 ls "s3://scopuli-chain-a-backup/" --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net \
-      | awk '{print $4}' | grep "^${PREFIX}" | sort -r | tail -n +3)
-    for OLD_BLOB in $CHAIN_A_OLD; do
-      OLD_NAME=$(echo "$OLD_BLOB" | sed 's/\.age$//')
-      echo "Deleting old Chain A DB blob: $OLD_BLOB"
-      "$AWS_PY" "$AWS" s3 rm "s3://scopuli-chain-a-backup/${OLD_BLOB}" --endpoint-url https://s3.eu-west-par.io.cloud.ovh.net
-      AZ_TOKEN=$($CURL $CURL_OPTS -s -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
-        -d "grant_type=client_credentials&client_id=${AZURE_CLIENT_ID}&client_secret=${AZURE_CLIENT_SECRET}&scope=https://vault.azure.net/.default" \
-        | "$JQ" -r '.access_token')
-      $CURL $CURL_OPTS -s -X DELETE "https://kv-solsys-chainb.vault.azure.net/secrets/${OLD_NAME}?api-version=7.4" \
-        -H "Authorization: Bearer $AZ_TOKEN" -o /dev/null -w "  delete: HTTP %{http_code}\n"
-      $CURL $CURL_OPTS -s -X DELETE "https://kv-solsys-chainb.vault.azure.net/deletedsecrets/${OLD_NAME}?api-version=7.4" \
-        -H "Authorization: Bearer $AZ_TOKEN" -o /dev/null -w "  purge: HTTP %{http_code}\n"
-    done
+    FAIL=0
+    echo "=== upload to both chains ==="
+    upload_both /tmp/selftest.bin "$NAME" "^selftest-" || FAIL=1
 
-    echo "=== Chain B: encrypt, upload, store key, prune ==="
-    "$AGE_KEYGEN" -o /tmp/chain-b.key 2>/tmp/chain-b-pub.txt
-    CHAIN_B_PUBKEY=$(grep "Public key:" /tmp/chain-b-pub.txt | awk '{print $NF}')
-    CHAIN_B_PRIVKEY=$(cat /tmp/chain-b.key)
+    echo "=== restore round-trip, Chain A ==="
+    if chain_a_fetch "$NAME" /tmp/restored-a.bin && [ "$(sha256sum /tmp/restored-a.bin | awk '{print $1}')" = "$ORIG" ]; then
+      echo "Chain A restore: OK (sha256 matches)"
+    else
+      echo "Chain A restore: FAILED"; FAIL=1
+    fi
+    echo "=== restore round-trip, Chain B ==="
+    if chain_b_fetch "$NAME" /tmp/restored-b.bin && [ "$(sha256sum /tmp/restored-b.bin | awk '{print $1}')" = "$ORIG" ]; then
+      echo "Chain B restore: OK (sha256 matches)"
+    else
+      echo "Chain B restore: FAILED"; FAIL=1
+    fi
 
-    export AWS_ACCESS_KEY_ID="$B2_KEY_ID"
-    export AWS_SECRET_ACCESS_KEY="$B2_KEY_SECRET"
-    "$AGE" -r "$CHAIN_B_PUBKEY" "$DUMP" | "$AWS_PY" "$AWS" s3 cp - "s3://barbapiccola-chain-b-backup/${NAME}.age" \
-      --endpoint-url https://s3.eu-central-003.backblazeb2.com
+    echo "=== cleaning up test objects and keys ==="
+    chain_a_delete "$NAME" || true
+    chain_b_delete "$NAME" || true
 
-    $CURL $CURL_OPTS -sL https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-x86_64-unknown-linux-musl-2.1.0.zip -o /tmp/bws.zip
-    "$UNZIP" -o /tmp/bws.zip -d /tmp
-    export BWS_SERVER_URL="https://vault.bitwarden.eu"
-    /tmp/bws secret create --access-token "$BW_ACCESS_TOKEN" "$NAME" "$CHAIN_B_PRIVKEY" "$BW_PROJECT_ID" > /dev/null
-
-    echo "Pruning Chain B DB backups (keeping 2 most recent; bucket is versioned, so delete all versions and markers)..."
-    CHAIN_B_OLD=$("$AWS_PY" "$AWS" s3 ls "s3://barbapiccola-chain-b-backup/" --endpoint-url https://s3.eu-central-003.backblazeb2.com \
-      | awk '{print $4}' | grep "^${PREFIX}" | sort -r | tail -n +3)
-    for OLD_BLOB in $CHAIN_B_OLD; do
-      OLD_NAME=$(echo "$OLD_BLOB" | sed 's/\.age$//')
-      echo "Deleting old Chain B DB blob (all versions + markers): $OLD_BLOB"
-
-      "$AWS_PY" "$AWS" s3api list-object-versions --bucket barbapiccola-chain-b-backup --prefix "$OLD_BLOB" \
-        --endpoint-url https://s3.eu-central-003.backblazeb2.com \
-        --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json > /tmp/del-versions.json
-      if [ "$("$JQ" '.Objects | length' /tmp/del-versions.json)" -gt 0 ]; then
-        "$AWS_PY" "$AWS" s3api delete-objects --bucket barbapiccola-chain-b-backup \
-          --endpoint-url https://s3.eu-central-003.backblazeb2.com --delete file:///tmp/del-versions.json
-      fi
-
-      "$AWS_PY" "$AWS" s3api list-object-versions --bucket barbapiccola-chain-b-backup --prefix "$OLD_BLOB" \
-        --endpoint-url https://s3.eu-central-003.backblazeb2.com \
-        --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' --output json > /tmp/del-markers.json
-      if [ "$("$JQ" '.Objects | length' /tmp/del-markers.json)" -gt 0 ]; then
-        "$AWS_PY" "$AWS" s3api delete-objects --bucket barbapiccola-chain-b-backup \
-          --endpoint-url https://s3.eu-central-003.backblazeb2.com --delete file:///tmp/del-markers.json
-      fi
-
-      OLD_SECRET_ID=$(/tmp/bws secret list "$BW_PROJECT_ID" --access-token "$BW_ACCESS_TOKEN" \
-        | "$JQ" -r ".[] | select(.key==\"${OLD_NAME}\") | .id")
-      if [ -n "$OLD_SECRET_ID" ]; then
-        /tmp/bws secret delete "$OLD_SECRET_ID" --access-token "$BW_ACCESS_TOKEN" > /dev/null
-        echo "  deleted secret $OLD_SECRET_ID"
-      else
-        echo "  WARNING: could not find matching Bitwarden secret for ${OLD_NAME}"
-      fi
-    done
-
-    echo "DB backup $RUN_ID uploaded to both chains and pruned."
+    if [ "$FAIL" -eq 0 ]; then echo "SELFTEST PASSED"; else echo "SELFTEST FAILED"; exit 1; fi
