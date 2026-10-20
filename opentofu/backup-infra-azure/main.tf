@@ -20,6 +20,18 @@ resource "azurerm_key_vault" "chain_b_key" {
       "Get", "List", "Set", "Delete", "Purge", "Recover"
     ]
   }
+
+  # Backup CronJob identity. Must stay inline: the inline access_policy blocks are
+  # authoritative for this vault, so a separate azurerm_key_vault_access_policy
+  # resource is silently removed again on the next vault update.
+  access_policy {
+    tenant_id = var.tenant_id
+    object_id = azuread_service_principal.backup_writer.object_id
+
+    secret_permissions = [
+      "Get", "Set", "List", "Delete", "Purge"
+    ]
+  }
 }
 
 resource "azuread_application" "backup_writer" {
@@ -33,14 +45,6 @@ resource "azuread_service_principal" "backup_writer" {
 resource "azuread_application_password" "backup_writer" {
   application_id = azuread_application.backup_writer.id
   display_name   = "backup-cronjob-secret"
-}
-
-resource "azurerm_key_vault_access_policy" "backup_writer" {
-  key_vault_id = azurerm_key_vault.chain_b_key.id
-  tenant_id    = var.tenant_id
-  object_id    = azuread_service_principal.backup_writer.object_id
-
-  secret_permissions = ["Get", "Set", "List", "Delete", "Purge"]
 }
 
 output "backup_writer_client_id" {
