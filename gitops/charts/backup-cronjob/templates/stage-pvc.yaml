@@ -1,0 +1,17 @@
+# Persistent staging volume: prepare writes the encrypted backup here, the upload window reads it.
+# Prune=false so that removing/renaming this file in git can never delete a backup that is
+# waiting for its upload.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.appName }}-stage
+  namespace: {{ .Values.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false
+spec:
+  storageClassName: {{ .Values.stageStorageClass }}
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.stagePvcSize }}

@@ -6,29 +6,36 @@ metadata:
 data:
   chain-lib.sh: |
     #!/bin/sh
-    # Shared by backup-worker.sh, dbupload.sh and selftest.sh (sourced, never run directly).
+    # Shared by stage-item.sh, stagecheck.sh, upload-stage.sh and selftest.sh (sourced, never run directly).
     #
-    # Contract: a chain is only reported OK when the object is uploaded AND its size is
-    # verified AND its decryption key is stored AND read back identically. Anything less
-    # removes the half-finished object again. Pruning only ever runs after a chain is fully OK,
-    # so a broken run can never cost us an older, restorable backup.
-    # Note: functions called from an `if` run with `set -e` disabled, so every step here
-    # checks its own result explicitly.
+    # Backup layout in every bucket (per backup NAME):
+    #   NAME/0001 NAME/0002 ...   encrypted data in CHUNK_MIB-sized chunks, uploaded one by one
+    #   NAME/MANIFEST             written LAST - a backup exists only if its MANIFEST exists
+    #   NAME.age                  legacy single-object layout (older backups), still understood
+    #
+    # Contract: a chain only counts a backup as present when every chunk is uploaded and size-verified
+    # and the MANIFEST is written. The decryption key is stored in the key vault BEFORE any data is
+    # staged, so an object can never exist without its key. Pruning only runs after a chain is fully
+    # complete, so a broken run can never cost us an older, restorable backup.
+    # Note: functions called from an `if` run with `set -e` disabled, so every step checks its own result.
 
     AWS="/tmp/pkgroot/usr/bin/aws"
     AWS_PY="/tmp/pkgroot/usr/bin/python3"
     AGE="/tmp/pkgroot/usr/bin/age"
     AGE_KEYGEN="/tmp/pkgroot/usr/bin/age-keygen"
+    ZSTD="/tmp/pkgroot/usr/bin/zstd"
     UNZIP="/tmp/pkgroot/usr/bin/unzip"
     CURL="/tmp/pkgroot/usr/bin/curl"
     JQ="/tmp/pkgroot/usr/bin/jq"
     export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
     export HOME=/tmp   # bws and aws want a writable home (state/config files)
 
-    # TLS: verify certificates (no more curl -k). Prefer the bundle from the alternate root.
+    log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
+
+    # TLS: verify certificates (no curl -k). Prefer the bundle from the alternate root.
     CA_BUNDLE="/tmp/pkgroot/etc/ssl/certs/ca-certificates.crt"
     [ -s "$CA_BUNDLE" ] || CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
-    [ -s "$CA_BUNDLE" ] || { echo "FATAL: no CA bundle found - refusing to talk to vaults without TLS verification" >&2; exit 1; }
+    [ -s "$CA_BUNDLE" ] || { log "FATAL: no CA bundle found - refusing to talk to vaults without TLS verification" >&2; exit 1; }
 
     OVH_EP="https://s3.eu-west-par.io.cloud.ovh.net"
     B2_EP="https://s3.eu-central-003.backblazeb2.com"
@@ -38,31 +45,34 @@ data:
     BWS_URL="https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-x86_64-unknown-linux-musl-2.1.0.zip"
     BWS_ZIP_SHA256="f59ee150e42b82128d437087e9bac920053c6bfddcb960d20ce9386e5ac9bba6"
 
+    CHUNK_MIB="${CHUNK_MIB:-2048}"
+
     curl_ca() { "$CURL" --cacert "$CA_BUNDLE" -sS --retry 3 --retry-delay 2 "$@"; }
+
+    # Conservative transfer settings; UPLOAD_MAX_BANDWIDTH_KBPS=0 means unlimited.
+    aws_tune() {
+      "$AWS_PY" "$AWS" configure set default.s3.multipart_chunksize 64MB
+      "$AWS_PY" "$AWS" configure set default.s3.max_concurrent_requests 4
+      if [ "${UPLOAD_MAX_BANDWIDTH_KBPS:-0}" -gt 0 ]; then
+        "$AWS_PY" "$AWS" configure set default.s3.max_bandwidth "${UPLOAD_MAX_BANDWIDTH_KBPS}KB/s"
+        log "Upload bandwidth capped at ${UPLOAD_MAX_BANDWIDTH_KBPS} KB/s"
+      else
+        log "Upload bandwidth: unlimited"
+      fi
+    }
 
     # ---------------------------------------------------------------- generic S3 helpers
     # Arguments are always: bucket endpoint ...
-
-    # Streams age(infile) into S3. --expected-size is REQUIRED for streams over ~50 GB:
-    # without it the CLI uses 8 MB parts and dies at the 10000-part limit (~80 GB).
-    # The +2% +1 MiB covers the age header/chunk overhead; EXPECTED_SIZE_OVERRIDE is for the selftest.
-    s3_put_encrypted() { # bucket endpoint recipient infile key
-      _size=$(stat -c%s "$4")
-      _expected=${EXPECTED_SIZE_OVERRIDE:-$(( _size + _size / 50 + 1048576 ))}
-      "$AGE" -r "$3" "$4" | "$AWS_PY" "$AWS" s3 cp - "s3://$1/$5" --endpoint-url "$2" --expected-size "$_expected"
-    }
-
-    s3_verify_size() { # bucket endpoint key min_bytes_exclusive
-      _len=$("$AWS_PY" "$AWS" s3api head-object --bucket "$1" --key "$3" --endpoint-url "$2" --query ContentLength --output text) || return 1
-      echo "  remote object $3: $_len bytes"
-      [ "$_len" -gt "$4" ]
-    }
 
     s3_remove() { # bucket endpoint key
       "$AWS_PY" "$AWS" s3 rm "s3://$1/$3" --endpoint-url "$2"
     }
 
-    abort_mpu() { # bucket endpoint key  (best effort: abort dangling multipart uploads)
+    s3_head_len() { # bucket endpoint key -> prints ContentLength
+      "$AWS_PY" "$AWS" s3api head-object --bucket "$1" --key "$3" --endpoint-url "$2" --query ContentLength --output text
+    }
+
+    abort_mpu() { # bucket endpoint key_prefix  (best effort: abort dangling multipart uploads)
       "$AWS_PY" "$AWS" s3api list-multipart-uploads --bucket "$1" --endpoint-url "$2" --prefix "$3" \
         --query 'Uploads[].[Key,UploadId]' --output text 2>/dev/null | while read -r _k _u; do
         if [ -n "$_u" ] && [ "$_u" != "None" ]; then
@@ -79,10 +89,10 @@ data:
         --data-urlencode "client_id=${AZURE_CLIENT_ID}" \
         --data-urlencode "client_secret=${AZURE_CLIENT_SECRET}" \
         --data-urlencode "scope=https://vault.azure.net/.default" \
-        -o /tmp/az-token.json || { echo "Azure: token request failed (network/TLS)" >&2; return 1; }
+        -o /tmp/az-token.json || { log "Azure: token request failed (network/TLS)" >&2; return 1; }
       _t=$("$JQ" -r '.access_token // empty' /tmp/az-token.json)
       if [ -z "$_t" ]; then
-        echo "Azure: no access token: $("$JQ" -r '.error_description // .error // "unknown"' /tmp/az-token.json | head -c 300)" >&2
+        log "Azure: no access token: $("$JQ" -r '.error_description // .error // "unknown"' /tmp/az-token.json | head -c 300)" >&2
         rm -f /tmp/az-token.json
         return 1
       fi
@@ -97,10 +107,10 @@ data:
       _code=$(curl_ca -o /tmp/az-resp.json -w '%{http_code}' -X PUT "${KV_URL}/secrets/$1?api-version=7.4" \
         -H "Authorization: Bearer ${_tok}" -H "Content-Type: application/json" -d @/tmp/az-body.json) || _code="000"
       rm -f /tmp/az-body.json
-      echo "Azure Key Vault store ($1): HTTP ${_code}"
+      log "Azure Key Vault store ($1): HTTP ${_code}"
       case "$_code" in
         2??) return 0 ;;
-        *) echo "  response: $(head -c 400 /tmp/az-resp.json 2>/dev/null)"; return 1 ;;
+        *) log "  response: $(head -c 400 /tmp/az-resp.json 2>/dev/null)"; return 1 ;;
       esac
     }
 
@@ -111,11 +121,11 @@ data:
     }
 
     az_delete_secret() { # name
-      _tok=$(az_token) || { echo "  WARNING: Azure token failed, secret $1 NOT deleted"; return 1; }
+      _tok=$(az_token) || { log "  WARNING: Azure token failed, secret $1 NOT deleted"; return 1; }
       _c1=$(curl_ca -o /dev/null -w '%{http_code}' -X DELETE "${KV_URL}/secrets/$1?api-version=7.4" -H "Authorization: Bearer ${_tok}") || _c1=000
       sleep 2
       _c2=$(curl_ca -o /dev/null -w '%{http_code}' -X DELETE "${KV_URL}/deletedsecrets/$1?api-version=7.4" -H "Authorization: Bearer ${_tok}") || _c2=000
-      echo "  Azure secret $1: delete HTTP ${_c1}, purge HTTP ${_c2}"
+      log "  Azure secret $1: delete HTTP ${_c1}, purge HTTP ${_c2}"
     }
 
     # ---------------------------------------------------------------- Bitwarden Secrets Manager (Chain B keys)
@@ -123,17 +133,17 @@ data:
       export BWS_SERVER_URL="https://vault.bitwarden.eu"
       export BWS_ACCESS_TOKEN="$BW_ACCESS_TOKEN"
       [ -x /tmp/bws ] && return 0
-      curl_ca -L "$BWS_URL" -o /tmp/bws.zip || { echo "bws: download failed"; return 1; }
-      echo "$BWS_ZIP_SHA256  /tmp/bws.zip" | sha256sum -c - >/dev/null || { echo "bws: CHECKSUM MISMATCH - refusing to run a binary that does not match the pinned hash"; return 1; }
+      curl_ca -L "$BWS_URL" -o /tmp/bws.zip || { log "bws: download failed"; return 1; }
+      echo "$BWS_ZIP_SHA256  /tmp/bws.zip" | sha256sum -c - >/dev/null || { log "bws: CHECKSUM MISMATCH - refusing to run a binary that does not match the pinned hash"; return 1; }
       "$UNZIP" -o /tmp/bws.zip -d /tmp >/dev/null || return 1
       chmod +x /tmp/bws
     }
 
     bws_put_secret() { # name value
-      /tmp/bws secret create "$1" "$2" "$BW_PROJECT_ID" > /dev/null || { echo "Bitwarden: secret create FAILED ($1)"; return 1; }
+      /tmp/bws secret create "$1" "$2" "$BW_PROJECT_ID" > /dev/null || { log "Bitwarden: secret create FAILED ($1)"; return 1; }
       _id=$(/tmp/bws secret list "$BW_PROJECT_ID" | "$JQ" -r --arg k "$1" '.[] | select(.key==$k) | .id') || _id=""
-      [ -n "$_id" ] || { echo "Bitwarden: secret $1 not found after create"; return 1; }
-      echo "Bitwarden secret stored ($1): $_id"
+      [ -n "$_id" ] || { log "Bitwarden: secret $1 not found after create"; return 1; }
+      log "Bitwarden secret stored ($1): $_id"
     }
 
     bws_get_secret() { # name -> prints value
@@ -143,14 +153,14 @@ data:
     bws_delete_secret() { # name
       _id=$(/tmp/bws secret list "$BW_PROJECT_ID" | "$JQ" -r --arg k "$1" '.[] | select(.key==$k) | .id') || _id=""
       if [ -n "$_id" ]; then
-        /tmp/bws secret delete "$_id" > /dev/null && echo "  deleted Bitwarden secret $_id"
+        /tmp/bws secret delete "$_id" > /dev/null && log "  deleted Bitwarden secret $_id"
       else
-        echo "  WARNING: no Bitwarden secret named $1"
+        log "  WARNING: no Bitwarden secret named $1"
       fi
     }
 
-    # Versioned bucket: delete every version and every delete marker of one exact key.
-    b2_purge_key() { # key
+    # Versioned bucket: delete every version and every delete marker under one key or prefix.
+    b2_purge_key() { # key_or_prefix
       for _kind in Versions DeleteMarkers; do
         "$AWS_PY" "$AWS" s3api list-object-versions --bucket "$BUCKET_B" --prefix "$1" --endpoint-url "$B2_EP" \
           --query "{Objects: ${_kind}[].{Key:Key,VersionId:VersionId}}" --output json > /tmp/del.json || continue
@@ -160,260 +170,460 @@ data:
       done
     }
 
-    # ---------------------------------------------------------------- Chain A: OVH Object Storage + Azure Key Vault
+    # ---------------------------------------------------------------- chains A and B behind one interface
     chain_a_env() { export AWS_ACCESS_KEY_ID="$OVH_S3_ACCESS_KEY"; export AWS_SECRET_ACCESS_KEY="$OVH_S3_SECRET_KEY"; }
-
-    chain_a_discard() { # name
-      abort_mpu "$BUCKET_A" "$OVH_EP" "$1.age"
-      s3_remove "$BUCKET_A" "$OVH_EP" "$1.age" > /dev/null 2>&1 || true
-    }
-
-    chain_a_store() { # infile name
-      chain_a_env
-      _kf="/tmp/chain-a.key"
-      "$AGE_KEYGEN" -o "$_kf" 2>/tmp/chain-a-pub.txt || { echo "Chain A: age-keygen failed"; return 1; }
-      _pub=$(grep "Public key:" /tmp/chain-a-pub.txt | awk '{print $NF}')
-      _priv=$(cat "$_kf")
-      [ -n "$_pub" ] && [ -n "$_priv" ] || { echo "Chain A: no key material generated"; return 1; }
-      echo "Chain A: encrypting and uploading $2.age"
-      if ! s3_put_encrypted "$BUCKET_A" "$OVH_EP" "$_pub" "$1" "$2.age"; then
-        echo "Chain A: UPLOAD FAILED"
-        chain_a_discard "$2"; rm -f "$_kf"; return 1
-      fi
-      if ! s3_verify_size "$BUCKET_A" "$OVH_EP" "$2.age" "$(stat -c%s "$1")"; then
-        echo "Chain A: remote object missing or too small"
-        chain_a_discard "$2"; rm -f "$_kf"; return 1
-      fi
-      if ! az_put_secret "$2" "$_priv"; then
-        echo "Chain A: KEY STORE FAILED - removing the undecryptable object so it is never counted as a backup"
-        chain_a_discard "$2"; rm -f "$_kf"; return 1
-      fi
-      _back=$(az_get_secret "$2") || _back=""
-      if [ "$_back" != "$_priv" ]; then
-        echo "Chain A: key read-back MISMATCH"
-        chain_a_discard "$2"; rm -f "$_kf"; return 1
-      fi
-      rm -f "$_kf"
-      echo "Chain A: OK - $2.age uploaded, verified, key stored and read back"
-    }
-
-    chain_a_fetch() { # name outfile   (download + decrypt, used by the selftest and as the restore recipe)
-      chain_a_env
-      _k=$(az_get_secret "$1") || return 1
-      [ -n "$_k" ] || return 1
-      printf '%s\n' "$_k" > /tmp/restore-a.key
-      "$AWS_PY" "$AWS" s3 cp "s3://$BUCKET_A/$1.age" - --endpoint-url "$OVH_EP" | "$AGE" -d -i /tmp/restore-a.key > "$2" || { rm -f /tmp/restore-a.key; return 1; }
-      rm -f /tmp/restore-a.key
-    }
-
-    chain_a_delete() { # name
-      chain_a_env
-      s3_remove "$BUCKET_A" "$OVH_EP" "$1.age" || echo "  WARNING: could not delete Chain A object $1.age"
-      az_delete_secret "$1" || true
-    }
-
-    chain_a_prune() { # name_regex  (keeps the 2 newest)
-      chain_a_env
-      echo "Pruning Chain A (keeping 2 most recent matching $1; plain delete is permanent on this bucket)..."
-      _old=$("$AWS_PY" "$AWS" s3 ls "s3://$BUCKET_A/" --endpoint-url "$OVH_EP" | awk '{print $4}' | grep -E "$1" | sort -r | tail -n +3) || true
-      for _blob in $_old; do
-        _n="${_blob%.age}"
-        echo "Deleting old Chain A blob: $_blob"
-        s3_remove "$BUCKET_A" "$OVH_EP" "$_blob" || echo "  WARNING: delete of $_blob failed"
-        az_delete_secret "$_n" || true
-      done
-      return 0
-    }
-
-    # ---------------------------------------------------------------- Chain B: Backblaze B2 + Bitwarden Secrets Manager
     chain_b_env() { export AWS_ACCESS_KEY_ID="$B2_KEY_ID"; export AWS_SECRET_ACCESS_KEY="$B2_KEY_SECRET"; }
 
-    chain_b_discard() { # name
-      abort_mpu "$BUCKET_B" "$B2_EP" "$1.age"
-      b2_purge_key "$1.age" > /dev/null 2>&1 || true
+    # Selects chain A|B: exports its credentials and sets C_BUCKET / C_EP.
+    chain_setup() {
+      case "$1" in
+        A) chain_a_env; C_BUCKET="$BUCKET_A"; C_EP="$OVH_EP" ;;
+        B) chain_b_env; bws_init || return 1; C_BUCKET="$BUCKET_B"; C_EP="$B2_EP" ;;
+        *) return 1 ;;
+      esac
     }
 
-    chain_b_store() { # infile name
-      chain_b_env
-      bws_init || { echo "Chain B: Bitwarden client unavailable"; return 1; }
-      _kf="/tmp/chain-b.key"
-      "$AGE_KEYGEN" -o "$_kf" 2>/tmp/chain-b-pub.txt || { echo "Chain B: age-keygen failed"; return 1; }
-      _pub=$(grep "Public key:" /tmp/chain-b-pub.txt | awk '{print $NF}')
-      _priv=$(cat "$_kf")
-      [ -n "$_pub" ] && [ -n "$_priv" ] || { echo "Chain B: no key material generated"; return 1; }
-      echo "Chain B: encrypting and uploading $2.age"
-      if ! s3_put_encrypted "$BUCKET_B" "$B2_EP" "$_pub" "$1" "$2.age"; then
-        echo "Chain B: UPLOAD FAILED"
-        chain_b_discard "$2"; rm -f "$_kf"; return 1
-      fi
-      if ! s3_verify_size "$BUCKET_B" "$B2_EP" "$2.age" "$(stat -c%s "$1")"; then
-        echo "Chain B: remote object missing or too small"
-        chain_b_discard "$2"; rm -f "$_kf"; return 1
-      fi
-      if ! bws_put_secret "$2" "$_priv"; then
-        echo "Chain B: KEY STORE FAILED - removing the undecryptable object so it is never counted as a backup"
-        chain_b_discard "$2"; rm -f "$_kf"; return 1
-      fi
-      _back=$(bws_get_secret "$2") || _back=""
-      if [ "$_back" != "$_priv" ]; then
-        echo "Chain B: key read-back MISMATCH"
-        chain_b_discard "$2"; rm -f "$_kf"; return 1
-      fi
-      rm -f "$_kf"
-      echo "Chain B: OK - $2.age uploaded, verified, key stored and read back"
+    key_put() { case "$1" in A) az_put_secret "$2" "$3" ;; B) bws_put_secret "$2" "$3" ;; *) return 1 ;; esac; }
+    key_get() { case "$1" in A) az_get_secret "$2" ;; B) bws_get_secret "$2" ;; *) return 1 ;; esac; }
+    key_del() { case "$1" in A) az_delete_secret "$2" ;; B) bws_delete_secret "$2" ;; *) return 1 ;; esac; }
+
+    chain_has_key() { # A|B object_key
+      chain_setup "$1" || return 1
+      "$AWS_PY" "$AWS" s3api head-object --bucket "$C_BUCKET" --key "$2" --endpoint-url "$C_EP" >/dev/null 2>&1
     }
 
-    chain_b_fetch() { # name outfile
-      chain_b_env
-      bws_init || return 1
-      _k=$(bws_get_secret "$1") || return 1
-      [ -n "$_k" ] || return 1
-      printf '%s\n' "$_k" > /tmp/restore-b.key
-      "$AWS_PY" "$AWS" s3 cp "s3://$BUCKET_B/$1.age" - --endpoint-url "$B2_EP" | "$AGE" -d -i /tmp/restore-b.key > "$2" || { rm -f /tmp/restore-b.key; return 1; }
-      rm -f /tmp/restore-b.key
+    # Removes the chunked layout and the legacy single object of one backup (not its key).
+    chain_remove_backup() { # A|B name
+      chain_setup "$1" || return 1
+      abort_mpu "$C_BUCKET" "$C_EP" "$2"
+      case "$1" in
+        A) "$AWS_PY" "$AWS" s3 rm "s3://$C_BUCKET/$2/" --recursive --endpoint-url "$C_EP" >/dev/null 2>&1 || true
+           s3_remove "$C_BUCKET" "$C_EP" "$2.age" >/dev/null 2>&1 || true ;;
+        B) b2_purge_key "$2/" >/dev/null 2>&1 || true
+           b2_purge_key "$2.age" >/dev/null 2>&1 || true ;;
+      esac
     }
 
-    chain_b_delete() { # name
-      chain_b_env
-      bws_init || return 1
-      b2_purge_key "$1.age" || echo "  WARNING: could not purge Chain B object $1.age"
-      bws_delete_secret "$1" || true
+    # Names of all backups (complete or not) whose name matches the regex, newest first.
+    chain_list_names() { # A|B regex
+      chain_setup "$1" || return 1
+      "$AWS_PY" "$AWS" s3api list-objects-v2 --bucket "$C_BUCKET" --delimiter "/" --endpoint-url "$C_EP" \
+        --query '[CommonPrefixes[].Prefix, Contents[].Key][]' --output json 2>/dev/null \
+        | "$JQ" -r '.[]? | select(. != null)' | sed -e 's#/$##' -e 's#\.age$##' | grep -E "$2" | sort -ru
     }
 
-    chain_b_prune() { # name_regex  (keeps the 2 newest)
-      chain_b_env
-      bws_init || { echo "WARNING: Chain B prune skipped (bws unavailable)"; return 0; }
-      echo "Pruning Chain B (keeping 2 most recent matching $1; versioned bucket, so all versions and markers go)..."
-      _old=$("$AWS_PY" "$AWS" s3 ls "s3://$BUCKET_B/" --endpoint-url "$B2_EP" | awk '{print $4}' | grep -E "$1" | sort -r | tail -n +3) || true
-      for _blob in $_old; do
-        _n="${_blob%.age}"
-        echo "Deleting old Chain B blob (all versions + markers): $_blob"
-        b2_purge_key "$_blob" || echo "  WARNING: purge of $_blob failed"
-        bws_delete_secret "$_n" || true
+    chain_is_complete() { # A|B name
+      chain_has_key "$1" "$2.age" || chain_has_key "$1" "$2/MANIFEST"
+    }
+
+    # Keeps the 2 newest COMPLETE backups; everything older, and incomplete leftovers, goes (with its key).
+    chain_prune() { # A|B regex
+      chain_setup "$1" || return 0
+      log "Pruning Chain $1 (keeping the 2 newest complete backups matching $2)..."
+      _keep=0
+      for _n in $(chain_list_names "$1" "$2"); do
+        if chain_is_complete "$1" "$_n"; then
+          _keep=$((_keep + 1))
+          [ "$_keep" -le 2 ] && continue
+          log "  deleting old backup $_n"
+        else
+          log "  removing incomplete leftover $_n"
+        fi
+        chain_remove_backup "$1" "$_n" || log "  WARNING: delete of $_n failed"
+        key_del "$1" "$_n" || true
       done
       return 0
     }
 
-    # ---------------------------------------------------------------- both chains
-    # Each chain is independent: a failure in A does not stop B. Pruning happens per chain,
-    # and only for a chain that finished completely OK. Returns non-zero if either chain failed.
-    upload_both() { # infile name prune_regex
-      A_RESULT=FAILED; B_RESULT=FAILED
-      if chain_a_store "$1" "$2"; then A_RESULT=OK; chain_a_prune "$3"; fi
-      if chain_b_store "$1" "$2"; then B_RESULT=OK; chain_b_prune "$3"; fi
-      echo "CHAIN RESULT - A: ${A_RESULT} | B: ${B_RESULT}"
-      [ "$A_RESULT" = "OK" ] && [ "$B_RESULT" = "OK" ]
+    # ---------------------------------------------------------------- resumable chunked upload
+    # Uploads /stage/<kind> (data.age + SIZE + SHA256 + CREATED) to one chain, chunk by chunk.
+    # Progress lives in <dir>/progress-<chain>/<chunk>; a re-run skips finished chunks.
+    # Needs UPLOAD_DEADLINE (epoch seconds). Returns 0 = complete, 2 = window closed (resume later), 1 = failed.
+    upload_item_chain() { # A|B dir name prune_regex
+      _x="$1"; _dir="$2"; _name="$3"; _re="$4"
+      chain_setup "$_x" || { log "Chain $_x: setup failed"; return 1; }
+      if [ -f "$_dir/done-$_x" ]; then log "Chain $_x: $_name already complete"; return 0; fi
+      _size=$(cat "$_dir/SIZE")
+      _cb=$((CHUNK_MIB * 1048576))
+      _n=$(( (_size + _cb - 1) / _cb ))
+      _prog="$_dir/progress-$_x"
+      mkdir -p "$_prog"
+      abort_mpu "$C_BUCKET" "$C_EP" "$_name/"
+      _have=$(ls "$_prog" | wc -l)
+      log "Chain $_x: $_name - $_size bytes in $_n chunks of $CHUNK_MIB MiB ($_have already uploaded)"
+      _est=${EST_CHUNK_SECONDS:-900}
+      _i=1
+      while [ "$_i" -le "$_n" ]; do
+        _id=$(printf '%04d' "$_i")
+        if [ -s "$_prog/$_id" ]; then _i=$((_i + 1)); continue; fi
+        _left=$(( UPLOAD_DEADLINE - $(date +%s) ))
+        if [ "$_left" -lt "$_est" ]; then
+          log "Chain $_x: window closing (${_left}s left, a chunk needs about ${_est}s) - stopping cleanly before chunk $_id of $_n"
+          return 2
+        fi
+        _want=$_cb
+        _rem=$(( _size - (_i - 1) * _cb ))
+        [ "$_rem" -lt "$_want" ] && _want=$_rem
+        _tmp="$_dir/chunk.tmp"
+        rm -f "$_tmp"
+        dd if="$_dir/data.age" of="$_tmp" bs=1M skip=$(( (_i - 1) * CHUNK_MIB )) count="$CHUNK_MIB" 2>/dev/null
+        if [ "$(stat -c%s "$_tmp")" != "$_want" ]; then
+          log "Chain $_x: chunk $_id has wrong local size (expected $_want) - staged file damaged?"
+          rm -f "$_tmp"; return 1
+        fi
+        _sha=$(sha256sum "$_tmp" | awk '{print $1}')
+        _ok=no; _try=1; _t0=$(date +%s)
+        while [ "$_try" -le 3 ] && [ "$_ok" = no ]; do
+          _tl=$(( UPLOAD_DEADLINE - $(date +%s) + 300 ))
+          if [ "$_tl" -lt 60 ]; then break; fi
+          log "Chain $_x: uploading chunk $_id/$_n ($_want bytes), attempt $_try"
+          if timeout -s TERM "$_tl" "$AWS_PY" "$AWS" s3 cp "$_tmp" "s3://$C_BUCKET/$_name/$_id" --endpoint-url "$C_EP" --only-show-errors; then
+            _len=$(s3_head_len "$C_BUCKET" "$C_EP" "$_name/$_id") || _len=""
+            if [ "$_len" = "$_want" ]; then _ok=yes; else log "Chain $_x: chunk $_id size mismatch (remote '$_len', expected $_want)"; fi
+          else
+            log "Chain $_x: chunk $_id upload attempt $_try failed"
+          fi
+          if [ "$_ok" = no ]; then
+            abort_mpu "$C_BUCKET" "$C_EP" "$_name/$_id"
+            _try=$((_try + 1)); sleep 20
+          fi
+        done
+        rm -f "$_tmp"
+        if [ "$_ok" != yes ]; then
+          if [ "$(( UPLOAD_DEADLINE - $(date +%s) ))" -lt 60 ]; then log "Chain $_x: window over while uploading chunk $_id - will resume it next window"; return 2; fi
+          log "Chain $_x: chunk $_id FAILED after 3 attempts"; return 1
+        fi
+        echo "$_want $_sha" > "$_prog/$_id"
+        _dt=$(( $(date +%s) - _t0 )); [ "$_dt" -lt 1 ] && _dt=1
+        _est=$(( _dt + _dt / 4 + 1 ))
+        log "Chain $_x: chunk $_id/$_n done in ${_dt}s"
+        _i=$((_i + 1))
+      done
+      # All chunks are in: write the MANIFEST last. Its presence is what makes the backup count.
+      _mf="$_dir/MANIFEST.$_x"
+      {
+        echo "name=$_name"
+        echo "size=$_size"
+        echo "chunk_bytes=$_cb"
+        echo "chunks=$_n"
+        echo "sha256=$(cat "$_dir/SHA256")"
+        echo "created=$(cat "$_dir/CREATED")"
+        for _f in "$_prog"/*; do echo "chunk $(basename "$_f") $(cat "$_f")"; done
+      } > "$_mf"
+      if ! "$AWS_PY" "$AWS" s3 cp "$_mf" "s3://$C_BUCKET/$_name/MANIFEST" --endpoint-url "$C_EP" --only-show-errors; then
+        log "Chain $_x: MANIFEST upload FAILED"; return 1
+      fi
+      _len=$(s3_head_len "$C_BUCKET" "$C_EP" "$_name/MANIFEST") || _len=""
+      if [ "$_len" != "$(stat -c%s "$_mf")" ]; then log "Chain $_x: MANIFEST size mismatch"; return 1; fi
+      touch "$_dir/done-$_x"
+      log "Chain $_x: OK - $_name complete ($_n chunks + MANIFEST, key in vault)"
+      chain_prune "$_x" "$_re"
+      return 0
     }
-  backup-worker.sh: |
+
+    # ---------------------------------------------------------------- restore (also used by the selftest)
+    chain_fetch() { # A|B name outfile   (download all chunks, decrypt with the key from the vault)
+      chain_setup "$1" || return 1
+      _k=$(key_get "$1" "$2") || return 1
+      [ -n "$_k" ] || { log "no key for $2 in the vault"; return 1; }
+      _kf="/tmp/restore-$1.key"
+      printf '%s\n' "$_k" > "$_kf"
+      if chain_has_key "$1" "$2/MANIFEST"; then
+        _want=$("$AWS_PY" "$AWS" s3 cp "s3://$C_BUCKET/$2/MANIFEST" - --endpoint-url "$C_EP" --only-show-errors | sed -n 's/^chunks=//p') || _want=""
+        _list=$("$AWS_PY" "$AWS" s3api list-objects-v2 --bucket "$C_BUCKET" --prefix "$2/" --endpoint-url "$C_EP" --query 'Contents[].Key' --output json \
+          | "$JQ" -r '.[]?' | grep -E '/[0-9]{4}$' | sort) || _list=""
+        if [ -z "$_want" ] || [ "$(echo "$_list" | wc -l)" != "$_want" ]; then
+          log "chunk count mismatch: manifest says '$_want', bucket has $(echo "$_list" | wc -l)"; rm -f "$_kf"; return 1
+        fi
+        ( for _c in $_list; do "$AWS_PY" "$AWS" s3 cp "s3://$C_BUCKET/$_c" - --endpoint-url "$C_EP" --only-show-errors || exit 1; done ) \
+          | "$AGE" -d -i "$_kf" > "$3" || { rm -f "$_kf"; return 1; }
+      else
+        "$AWS_PY" "$AWS" s3 cp "s3://$C_BUCKET/$2.age" - --endpoint-url "$C_EP" --only-show-errors | "$AGE" -d -i "$_kf" > "$3" || { rm -f "$_kf"; return 1; }
+      fi
+      rm -f "$_kf"
+    }
+    chain_a_fetch() { chain_fetch A "$@"; }
+    chain_b_fetch() { chain_fetch B "$@"; }
+
+    chain_delete() { # A|B name   (backup + key)
+      chain_remove_backup "$1" "$2" || true
+      key_del "$1" "$2" || true
+    }
+    chain_a_delete() { chain_delete A "$1"; }
+    chain_b_delete() { chain_delete B "$1"; }
+  stage-item.sh: |
     #!/bin/sh
+    # Prepares ONE backup item (ITEM_KIND=db or files) for the upload window:
+    #   1. generate one age key pair per chain and store the private keys in the vaults FIRST
+    #   2. compress + encrypt (one ciphertext, two recipients) into /stage/<kind>/data.age
+    #   3. verify by decrypting with the keys read back from the vaults
+    #   4. write SIZE / SHA256 and finally READY
+    # Nothing is uploaded here. On any failure the keys and the staged data are removed again.
     set -e
     set -o pipefail
 
-    echo "Installing age, zstd, aws-cli, unzip into alternate root..."
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Installing age, zstd, aws-cli, unzip, curl, jq into alternate root..."
     mkdir -p /tmp/pkgroot
     apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age zstd aws-cli unzip curl jq || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
-    export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
-    ZSTD="/tmp/pkgroot/usr/bin/zstd"
+    . /scripts/chain-lib.sh
 
-    ARCHIVE="/scratch/${APP_NAME}-${RUN_ID}.tar.zst"
-    echo "Compressing /data to scratch volume..."
-    tar -C /data -cf - . | "$ZSTD" -T4 -o "$ARCHIVE"
-
-    echo "Verifying compressed archive is genuinely substantial..."
-    ARCHIVE_SIZE=$(stat -c%s "$ARCHIVE" 2>/dev/null || wc -c < "$ARCHIVE")
-    MIN_EXPECTED_SIZE=1048576
-    echo "Archive size: ${ARCHIVE_SIZE} bytes"
-    if [ "$ARCHIVE_SIZE" -lt "$MIN_EXPECTED_SIZE" ]; then
-      echo "FATAL: compressed archive is only ${ARCHIVE_SIZE} bytes — expected at least ${MIN_EXPECTED_SIZE}. Compression likely failed or was killed mid-stream (check for OOMKill). Aborting before any upload."
-      exit 1
-    fi
-
-    echo "Verifying archive is a valid, complete zstd stream..."
-    if ! "$ZSTD" -t "$ARCHIVE"; then
-      echo "FATAL: archive failed zstd integrity check — corrupt or truncated. Aborting before any upload."
-      exit 1
-    fi
+    case "$ITEM_KIND" in
+      db)    NAME="${APP_NAME}-db-${RUN_ID}"; SRC="/dbdump/db/dump.sql"; MIN_SIZE=1024 ;;
+      files) NAME="${APP_NAME}-${RUN_ID}";    MIN_SIZE=1048576 ;;
+      *) log "FATAL: ITEM_KIND must be db or files"; exit 1 ;;
+    esac
+    D="/stage/$ITEM_KIND"
 
     if [ "$UPLOAD_ENABLED" != "true" ]; then
-      echo "TEST MODE (uploadEnabled=false): archive built and verified ($ARCHIVE_SIZE bytes). Skipping encryption, upload, key storage and pruning."
-      rm -f "$ARCHIVE"
+      if [ "$ITEM_KIND" = "files" ]; then
+        log "TEST MODE (uploadEnabled=false): reading /data through tar | zstd | zstd -t, nothing is staged or uploaded"
+        tar -C /data -cf - . | "$ZSTD" -T4 | "$ZSTD" -t
+        log "TEST MODE: archive stream is valid"
+      else
+        log "TEST MODE (uploadEnabled=false): nothing staged"
+      fi
       exit 0
     fi
 
-    . /scripts/chain-lib.sh
-    if upload_both "$ARCHIVE" "${APP_NAME}-${RUN_ID}" "^${APP_NAME}-[0-9]"; then
-      rm -f "$ARCHIVE"
-      echo "Backup run $RUN_ID complete."
+    if [ -e "$D" ]; then log "FATAL: $D already exists - the stage check should have cleaned it"; exit 1; fi
+    mkdir -p "$D"
+    echo "$NAME" > "$D/NAME"
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$D/CREATED"
+
+    OK=no
+    on_exit() {
+      rm -f /tmp/key-A.txt /tmp/key-B.txt /tmp/restore-A.key /tmp/restore-B.key
+      if [ "$OK" != "yes" ]; then
+        log "Staging of $NAME failed - removing its keys from the vaults and the staged data"
+        for _x in A B; do
+          if chain_setup "$_x"; then key_del "$_x" "$NAME" || true; fi
+        done
+        rm -rf "$D"
+      fi
+    }
+    trap on_exit EXIT
+
+    # 1. keys first, so an object can never exist without its key
+    for X in A B; do
+      chain_setup "$X" || { log "FATAL: chain $X is not usable - not staging"; exit 1; }
+      "$AGE_KEYGEN" -o "/tmp/key-$X.txt" 2>"/tmp/keygen-$X.txt"
+      grep "Public key:" "/tmp/keygen-$X.txt" | awk '{print $NF}' > "/tmp/pub-$X.txt"
+      _priv=$(cat "/tmp/key-$X.txt")
+      [ -s "/tmp/pub-$X.txt" ] && [ -n "$_priv" ] || { log "FATAL: no key material for chain $X"; exit 1; }
+      key_put "$X" "$NAME" "$_priv" || { log "FATAL: storing the key for chain $X failed"; exit 1; }
+      _back=$(key_get "$X" "$NAME") || _back=""
+      [ "$_back" = "$_priv" ] || { log "FATAL: key read-back mismatch on chain $X"; exit 1; }
+      log "Chain $X: key stored in the vault and read back identically"
+    done
+    PUB_A=$(cat /tmp/pub-A.txt); PUB_B=$(cat /tmp/pub-B.txt)
+
+    # 2. compress + encrypt (one ciphertext that either chain's key can open)
+    if [ "$ITEM_KIND" = "files" ]; then
+      log "Compressing and encrypting /data -> $D/data.age"
+      tar -C /data -cf - . | "$ZSTD" -T4 | "$AGE" -r "$PUB_A" -r "$PUB_B" | tee "$D/data.age" | sha256sum | awk '{print $1}' > "$D/SHA256"
     else
-      echo "FATAL: at least one chain failed - see CHAIN RESULT above."
-      exit 1
+      log "Encrypting the DB dump -> $D/data.age"
+      "$AGE" -r "$PUB_A" -r "$PUB_B" -o "$D/data.age" "$SRC"
+      sha256sum "$D/data.age" | awk '{print $1}' > "$D/SHA256"
     fi
-  dbupload.sh: |
+    SIZE=$(stat -c%s "$D/data.age")
+    log "Staged ciphertext: $SIZE bytes"
+    if [ "$SIZE" -lt "$MIN_SIZE" ]; then log "FATAL: staged file is only $SIZE bytes (minimum $MIN_SIZE) - something was killed mid-stream"; exit 1; fi
+
+    # 3. verify with the keys as stored in the vaults
+    for X in A B; do
+      chain_setup "$X"
+      key_get "$X" "$NAME" > "/tmp/restore-$X.key"
+    done
+    if [ "$ITEM_KIND" = "files" ]; then
+      log "Verifying: decrypting with the Chain A vault key, decompressing and walking the whole tar stream..."
+      "$AGE" -d -i /tmp/restore-A.key "$D/data.age" | "$ZSTD" -dc | tar -tf - > /dev/null
+    else
+      log "Verifying: decrypting with the Chain A vault key and comparing with the dump..."
+      "$AGE" -d -i /tmp/restore-A.key "$D/data.age" | cmp - "$SRC"
+    fi
+    log "Verifying the Chain B vault key can open the same file (first MiB)..."
+    _n=$("$AGE" -d -i /tmp/restore-B.key "$D/data.age" 2>/dev/null | head -c 1048576 | wc -c) || true
+    if [ "$_n" -lt 1 ]; then log "FATAL: the Chain B key cannot decrypt the staged file"; exit 1; fi
+    log "Verification passed"
+
+    # 4. commit: SIZE and SHA256 exist, READY is written last
+    echo "$SIZE" > "$D/SIZE"
+    sync
+    touch "$D/READY"
+    OK=yes
+    log "Staged $NAME (READY). The upload follows in the next upload window."
+  stagecheck.sh: |
     #!/bin/sh
+    # Looks at the staging volume before a new backup is prepared.
+    # Exit 0 = free to prepare, exit 3 = a previous backup is still waiting for its upload.
     set -e
+
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Installing curl, unzip, jq into alternate root..."
+    mkdir -p /tmp/pkgroot
+    apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted aws-cli unzip curl jq || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
+    . /scripts/chain-lib.sh
+
+    BUSY=0
+    for kind in db files; do
+      D="/stage/$kind"
+      [ -d "$D" ] || { log "stage/$kind: empty"; continue; }
+      name=$(cat "$D/NAME" 2>/dev/null || true)
+      if [ ! -f "$D/READY" ]; then
+        log "stage/$kind: unfinished staging of '$name' (an earlier prepare run died) - discarding its keys and data"
+        if [ -n "$name" ]; then
+          for x in A B; do
+            if chain_setup "$x"; then key_del "$x" "$name" || true; fi
+          done
+        fi
+        rm -rf "$D"
+        continue
+      fi
+      if [ -f "$D/done-A" ] && [ -f "$D/done-B" ]; then
+        log "stage/$kind: '$name' is fully uploaded - removing leftovers"
+        rm -rf "$D"
+        continue
+      fi
+      if [ -f "$D/done-A" ]; then _a=done; else _a=pending; fi
+      if [ -f "$D/done-B" ]; then _b=done; else _b=pending; fi
+      log "stage/$kind: '$name' is staged and its upload is not finished (chain A: $_a, chain B: $_b)"
+      BUSY=1
+    done
+
+    if [ "$BUSY" -eq 1 ]; then
+      log "STAGE BUSY - not preparing a new backup while the previous one is still being uploaded"
+      exit 3
+    fi
+    log "STAGE FREE"
+  upload-stage.sh: |
+    #!/bin/sh
+    # Runs inside the upload window (CronJob). Uploads everything that is staged, chunk by chunk,
+    # to both chains, stops cleanly when the window closes and resumes at the next window.
+    # Exit: 0 = nothing to do / complete / partial (will resume), 1 = a chain failed.
     set -o pipefail
 
-    echo "Installing age, aws-cli, unzip, curl, jq into alternate root..."
-    mkdir -p /tmp/pkgroot
-    apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age aws-cli unzip curl jq || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
-    export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
-    . /scripts/chain-lib.sh
+    LOG=/tmp/worker-output.log
+    STATUS_FILE=/tmp/upload-status.txt
+    : > "$LOG"
 
-    DUMP="/dbdump/db/dump.sql"
-    NAME="${APP_NAME}-db-${RUN_ID}"
+    main() {
+      set -e
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Installing aws-cli, unzip, curl, jq into alternate root..."
+      mkdir -p /tmp/pkgroot
+      apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted aws-cli unzip curl jq || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
+      . /scripts/chain-lib.sh
+      set +e
 
-    if [ ! -s "$DUMP" ]; then
-      echo "FATAL: no dump file at $DUMP - nothing to upload."
-      exit 1
+      aws_tune
+      UPLOAD_DEADLINE=$(( $(date +%s) + ${UPLOAD_WINDOW_MIN:-479} * 60 ))
+      export UPLOAD_DEADLINE
+      log "Upload window: ${UPLOAD_WINDOW_MIN:-479} minutes, chunk size ${CHUNK_MIB} MiB"
+
+      # stale chunk temp files from a killed run
+      rm -f /stage/db/chunk.tmp /stage/files/chunk.tmp
+
+      ANY=no; PARTIAL=no; FAILED=no; SUMMARY=""
+      for kind in db files; do
+        D="/stage/$kind"
+        [ -f "$D/READY" ] || continue
+        ANY=yes
+        NAME=$(cat "$D/NAME")
+        case "$kind" in
+          db)    RE="^${APP_NAME}-db-" ;;
+          files) RE="^${APP_NAME}-[0-9]" ;;
+        esac
+        for X in A B; do
+          upload_item_chain "$X" "$D" "$NAME" "$RE"
+          rc=$?
+          case "$rc" in
+            0) SUMMARY="${SUMMARY}${kind}/${X}=OK " ;;
+            2) SUMMARY="${SUMMARY}${kind}/${X}=PARTIAL "; PARTIAL=yes ;;
+            *) SUMMARY="${SUMMARY}${kind}/${X}=FAILED "; FAILED=yes ;;
+          esac
+          [ "$rc" = 2 ] && break
+        done
+        if [ -f "$D/done-A" ] && [ -f "$D/done-B" ]; then
+          log "$kind: $NAME is complete on both chains - removing the staged copy"
+          rm -rf "$D"
+        fi
+        [ "$PARTIAL" = yes ] && break
+      done
+
+      if [ "$ANY" = no ]; then
+        log "Nothing is staged - nothing to upload."
+        echo "NOTHING" > "$STATUS_FILE"; return 0
+      fi
+      log "UPLOAD RESULT - $SUMMARY"
+      if [ "$FAILED" = yes ]; then echo "FAILED: $SUMMARY" > "$STATUS_FILE"; return 1; fi
+      if [ "$PARTIAL" = yes ]; then echo "PARTIAL (resumes at the next upload window): $SUMMARY" > "$STATUS_FILE"; return 0; fi
+      echo "COMPLETE: $SUMMARY" > "$STATUS_FILE"; return 0
+    }
+
+    main 2>&1 | tee -a "$LOG"
+    RC=$?
+
+    STATUS=$(cat "$STATUS_FILE" 2>/dev/null || echo "FAILED: upload script ended unexpectedly")
+    if [ "$STATUS" != "NOTHING" ]; then
+      export STATUS="Upload ${STATUS}"
+      export RUN_ID="upload-$(date +%Y%m%d-%H%M%S)"
+      python3 /scripts-notify/notify.py || echo "WARNING: notification failed to send"
     fi
-    echo "Dump size: $(stat -c%s "$DUMP") bytes"
-
-    if upload_both "$DUMP" "$NAME" "^${APP_NAME}-db-"; then
-      echo "DB backup $RUN_ID uploaded to both chains (verified) and pruned."
-    else
-      echo "FATAL: at least one chain failed - see CHAIN RESULT above."
-      exit 1
-    fi
+    exit $RC
   selftest.sh: |
     #!/bin/sh
-    # One-off end-to-end check of the upload path, no cluster data involved:
-    # random file -> encrypt -> upload -> store key -> read key back -> download -> decrypt -> compare.
-    # Uses --expected-size as for a 120 GB stream, so the large-file code path is exercised too.
+    # One-off end-to-end check of the chunked upload path, no cluster data involved:
+    # random file -> encrypt (two recipients) -> store keys -> upload in small chunks WITH a forced
+    # window stop in the middle -> resume -> MANIFEST -> restore from both chains -> compare -> clean up.
     set -e
     set -o pipefail
 
-    echo "Installing age, aws-cli, unzip, curl, jq into alternate root..."
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Installing age, aws-cli, unzip, curl, jq into alternate root..."
     mkdir -p /tmp/pkgroot
     apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age aws-cli unzip curl jq || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
-    export LD_LIBRARY_PATH="/tmp/pkgroot/usr/lib:/tmp/pkgroot/lib:$LD_LIBRARY_PATH"
     . /scripts/chain-lib.sh
+    aws_tune
 
     NAME="selftest-$(date +%Y%m%d-%H%M%S)"
-    SIZE_MB="${SELFTEST_MB:-1024}"
-    echo "Generating ${SIZE_MB} MiB of random data..."
+    SIZE_MB="${SELFTEST_MB:-300}"
+    export CHUNK_MIB="${SELFTEST_CHUNK_MIB:-64}"
+    D=/tmp/stage-test
+    mkdir -p "$D"
+
+    log "Generating ${SIZE_MB} MiB of random data..."
     dd if=/dev/urandom of=/tmp/selftest.bin bs=1M count="$SIZE_MB" 2>/dev/null
     ORIG=$(sha256sum /tmp/selftest.bin | awk '{print $1}')
-    export EXPECTED_SIZE_OVERRIDE=120000000000
 
     FAIL=0
-    echo "=== upload to both chains ==="
-    upload_both /tmp/selftest.bin "$NAME" "^selftest-" || FAIL=1
+    for X in A B; do
+      chain_setup "$X"
+      "$AGE_KEYGEN" -o "/tmp/key-$X.txt" 2>"/tmp/keygen-$X.txt"
+      grep "Public key:" "/tmp/keygen-$X.txt" | awk '{print $NF}' > "/tmp/pub-$X.txt"
+      key_put "$X" "$NAME" "$(cat /tmp/key-$X.txt)" || FAIL=1
+    done
+    "$AGE" -r "$(cat /tmp/pub-A.txt)" -r "$(cat /tmp/pub-B.txt)" -o "$D/data.age" /tmp/selftest.bin
+    stat -c%s "$D/data.age" > "$D/SIZE"
+    sha256sum "$D/data.age" | awk '{print $1}' > "$D/SHA256"
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$D/CREATED"
 
-    echo "=== restore round-trip, Chain A ==="
-    if chain_a_fetch "$NAME" /tmp/restored-a.bin && [ "$(sha256sum /tmp/restored-a.bin | awk '{print $1}')" = "$ORIG" ]; then
-      echo "Chain A restore: OK (sha256 matches)"
-    else
-      echo "Chain A restore: FAILED"; FAIL=1
-    fi
-    echo "=== restore round-trip, Chain B ==="
-    if chain_b_fetch "$NAME" /tmp/restored-b.bin && [ "$(sha256sum /tmp/restored-b.bin | awk '{print $1}')" = "$ORIG" ]; then
-      echo "Chain B restore: OK (sha256 matches)"
-    else
-      echo "Chain B restore: FAILED"; FAIL=1
-    fi
+    log "=== window 1: forced to close after the first chunk(s) ==="
+    export UPLOAD_DEADLINE=$(( $(date +%s) + 2 ))
+    EST_CHUNK_SECONDS=1 upload_item_chain A "$D" "$NAME" "^selftest-" && log "window 1 chain A finished early" || log "window 1 stopped as expected (rc=$?)"
+    log "=== window 2: resume ==="
+    export UPLOAD_DEADLINE=$(( $(date +%s) + 3600 ))
+    for X in A B; do upload_item_chain "$X" "$D" "$NAME" "^selftest-" || FAIL=1; done
 
-    echo "=== cleaning up test objects and keys ==="
-    chain_a_delete "$NAME" || true
-    chain_b_delete "$NAME" || true
+    for X in A B; do
+      log "=== restore round-trip, Chain $X ==="
+      if chain_fetch "$X" "$NAME" "/tmp/restored-$X.bin" && [ "$(sha256sum /tmp/restored-$X.bin | awk '{print $1}')" = "$ORIG" ]; then
+        log "Chain $X restore: OK (sha256 matches)"
+      else
+        log "Chain $X restore: FAILED"; FAIL=1
+      fi
+    done
 
-    if [ "$FAIL" -eq 0 ]; then echo "SELFTEST PASSED"; else echo "SELFTEST FAILED"; exit 1; fi
+    log "=== cleaning up test objects and keys ==="
+    chain_delete A "$NAME" || true
+    chain_delete B "$NAME" || true
+    rm -rf "$D" /tmp/selftest.bin /tmp/restored-*.bin
+
+    if [ "$FAIL" -eq 0 ]; then log "SELFTEST PASSED"; else log "SELFTEST FAILED"; exit 1; fi

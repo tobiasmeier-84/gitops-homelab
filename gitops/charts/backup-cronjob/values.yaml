@@ -4,10 +4,34 @@ pvcName: rocinante-nextcloud-nextcloud
 pvcSize: 250Gi
 workerRunAsUser: 33
 notifyEmail: admin@solsys.dev
-schedule: "0 3 * * 0"
 nextcloudDeployment: rocinante-nextcloud
 dbHost: barbapiccola-rw.rocinante.svc.cluster.local
 dbPort: "5432"
 dbSecretName: barbapiccola-app
 dbPvcSize: 10Gi
 uploadEnabled: false
+
+# Time zone for BOTH schedules below (CronJob spec.timeZone, needs Kubernetes >= 1.27).
+timeZone: Europe/Zurich
+
+# Stage 1 "prepare": snapshot + DB dump (short Nextcloud maintenance window), clone,
+# compress, encrypt into the staging volume. Saturday 06:00 by default.
+schedule: "0 6 * * 6"
+
+# Stage 2 "upload": uploads whatever is staged, resumable. Sunday 00:01 by default;
+# it stops cleanly after uploadWindowMinutes (479 = until 08:00) and resumes at the next start.
+uploadSchedule: "1 0 * * 0"
+uploadWindowMinutes: 479
+
+# Upload bandwidth cap in KB/s for the whole upload, 0 = unlimited.
+# Raise/remove it when the network bottleneck is gone. 6144 = about 6 MB/s = 48 Mbit/s.
+uploadMaxBandwidthKBps: 0
+
+# Upload granularity: the encrypted file is uploaded in chunks of this size, finished chunks are
+# never repeated. Restore needs all chunks of a backup (see ADR-0005 restore recipe).
+chunkMiB: 2048
+
+# Persistent staging volume holding the encrypted backup between prepare and the end of its upload.
+# Must hold the compressed+encrypted archive (about 45% of the live data) plus one chunk.
+stagePvcSize: 200Gi
+stageStorageClass: longhorn-general-single-replica

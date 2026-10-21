@@ -1,0 +1,70 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Values.appName }}-upload
+  namespace: {{ .Values.namespace }}
+spec:
+  schedule: "{{ .Values.uploadSchedule }}"
+{{- if .Values.timeZone }}
+  timeZone: "{{ .Values.timeZone }}"
+{{- end }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 0
+      # Last-resort guard: the script stops by itself at the end of the window.
+      activeDeadlineSeconds: {{ add (mul (int .Values.uploadWindowMinutes) 60) 900 }}
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 60
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: {{ .Values.workerRunAsUser }}
+            fsGroup: {{ .Values.workerRunAsUser }}
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: upload
+              image: alpine/k8s:1.30.3
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              env:
+                - name: APP_NAME
+                  value: "{{ .Values.appName }}"
+                - name: NOTIFY_EMAIL
+                  value: "{{ .Values.notifyEmail }}"
+                - name: UPLOAD_WINDOW_MIN
+                  value: "{{ .Values.uploadWindowMinutes }}"
+                - name: UPLOAD_MAX_BANDWIDTH_KBPS
+                  value: "{{ .Values.uploadMaxBandwidthKBps }}"
+                - name: CHUNK_MIB
+                  value: "{{ .Values.chunkMiB }}"
+              envFrom:
+                - secretRef:
+                    name: backup-chain-credentials
+                - secretRef:
+                    name: backup-smtp-credentials
+              command: ["/bin/sh", "/scripts/upload-stage.sh"]
+              volumeMounts:
+                - name: stage
+                  mountPath: /stage
+                - name: scripts
+                  mountPath: /scripts
+                - name: notify-script
+                  mountPath: /scripts-notify
+          volumes:
+            - name: stage
+              persistentVolumeClaim:
+                claimName: {{ .Values.appName }}-stage
+            - name: scripts
+              configMap:
+                name: backup-worker-script
+            - name: notify-script
+              configMap:
+                name: backup-notify-script

@@ -5,6 +5,9 @@ metadata:
   namespace: {{ .Values.namespace }}
 spec:
   schedule: "{{ .Values.schedule }}"
+{{- if .Values.timeZone }}
+  timeZone: "{{ .Values.timeZone }}"
+{{- end }}
   concurrencyPolicy: Forbid
   jobTemplate:
     spec:
@@ -15,7 +18,7 @@ spec:
           serviceAccountName: {{ .Values.appName }}-backup
           restartPolicy: Never
           # Long enough for the SIGTERM trap's cleanup() to run in full
-          # (turn off maintenance mode, delete the snapshot/clone/scratch
+          # (turn off maintenance mode, delete the snapshot/clone
           # PVCs, capture logs) if the job is deleted manually mid-run.
           terminationGracePeriodSeconds: 120
           securityContext:
@@ -69,23 +72,24 @@ spec:
                   RUN_ID=$(date +%Y%m%d-%H%M%S)
                   SNAPSHOT_NAME="${APP_NAME}-snap-${RUN_ID}"
                   CLONE_PVC="${APP_NAME}-clone-${RUN_ID}"
-                  SCRATCH_PVC="${APP_NAME}-scratch-${RUN_ID}"
                   DBDUMP_PVC="${APP_NAME}-dbdump-${RUN_ID}"
-                  WORKER_POD="${APP_NAME}-worker-${RUN_ID}"
+                  FILESTAGE_POD="${APP_NAME}-filestage-${RUN_ID}"
                   DBDUMP_POD="${APP_NAME}-dbdump-${RUN_ID}"
                   DBPROCESS_POD="${APP_NAME}-dbprocess-${RUN_ID}"
-                  DBUPLOAD_POD="${APP_NAME}-dbupload-${RUN_ID}"
+                  DBSTAGE_POD="${APP_NAME}-dbstage-${RUN_ID}"
+                  STAGECHECK_POD="${APP_NAME}-stagecheck-${RUN_ID}"
+                  STAGE_PVC="${APP_NAME}-stage"
                   FILE_STATUS="NOT_RUN"
                   DB_DUMP_STATUS="NOT_RUN"
                   DB_PROCESS_STATUS="SKIPPED"
-                  DB_UPLOAD_STATUS="SKIPPED"
+                  DB_STAGE_STATUS="SKIPPED"
                   MAINTENANCE_ON="no"
                   export RUN_ID APP_NAME
 
                   : > /tmp/worker-output.log
 
                   log() {
-                    msg="$(date -u +%H:%M:%SZ) $*"
+                    msg="$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"
                     echo "$msg"
                     echo "$msg" >> /tmp/worker-output.log
                   }
@@ -110,12 +114,11 @@ spec:
                       log "Maintenance mode still on at exit - turning it off"
                       maintenance off || log "WARNING: could not turn maintenance mode off - check Nextcloud manually"
                     fi
-                    capture_and_delete_pods "$WORKER_POD" "$DBDUMP_POD" "$DBPROCESS_POD" "$DBUPLOAD_POD"
+                    capture_and_delete_pods "$STAGECHECK_POD" "$DBDUMP_POD" "$DBPROCESS_POD" "$DBSTAGE_POD" "$FILESTAGE_POD"
                     kubectl delete pvc "$CLONE_PVC" -n "$NAMESPACE" --ignore-not-found=true
-                    kubectl delete pvc "$SCRATCH_PVC" -n "$NAMESPACE" --ignore-not-found=true
                     kubectl delete pvc "$DBDUMP_PVC" -n "$NAMESPACE" --ignore-not-found=true
                     kubectl delete volumesnapshot "$SNAPSHOT_NAME" -n "$NAMESPACE" --ignore-not-found=true
-                    export STATUS="Files: ${FILE_STATUS} | Database: dump=${DB_DUMP_STATUS} process=${DB_PROCESS_STATUS} upload=${DB_UPLOAD_STATUS}"
+                    export STATUS="Prepare - Files: ${FILE_STATUS} | Database: dump=${DB_DUMP_STATUS} process=${DB_PROCESS_STATUS} stage=${DB_STAGE_STATUS}"
                     python3 /scripts-notify/notify.py || echo "WARNING: notification failed to send"
                   }
 
@@ -139,24 +142,6 @@ spec:
                     return 1
                   }
 
-                  # Reads the live PVC's real, current capacity and adds 10% headroom,
-                  # rather than trusting a static Helm value that could drift from
-                  # reality as the volume grows over time. Kubernetes quantity suffixes
-                  # (Gi/Mi/Ti) are parsed with a plain shell split, numeric part scaled
-                  # by 1.1 and rounded up (awk, since POSIX shell has no float math).
-                  compute_sized_with_headroom() {
-                    live_size=$(kubectl get pvc "$PVC_NAME" -n "$NAMESPACE" -o jsonpath='{.status.capacity.storage}')
-                    if [ -z "$live_size" ]; then
-                      echo "compute_sized_with_headroom: could not read live PVC size, falling back to PVC_SIZE=$PVC_SIZE" >&2
-                      echo "$PVC_SIZE"
-                      return
-                    fi
-                    num=$(echo "$live_size" | sed 's/[A-Za-z]*$//')
-                    unit=$(echo "$live_size" | sed 's/^[0-9]*//')
-                    scaled=$(awk -v n="$num" 'BEGIN { printf "%d", (n * 1.1) + 0.9999 }')
-                    echo "${scaled}${unit}"
-                  }
-
                   # Returns 0 once the PVC is Bound, 1 on timeout.
                   wait_pvc_bound() {
                     pvc_name="$1"
@@ -172,6 +157,56 @@ spec:
                     done
                     echo "wait_pvc_bound: timed out after ${timeout_s}s waiting for $pvc_name"
                     return 1
+                  }
+
+                  create_stagecheck_pod() {
+                    kubectl apply -f - << EOF
+                  apiVersion: v1
+                  kind: Pod
+                  metadata:
+                    name: $STAGECHECK_POD
+                    namespace: $NAMESPACE
+                    labels:
+                      app: backup-worker
+                  spec:
+                    restartPolicy: Never
+                    securityContext:
+                      runAsNonRoot: true
+                      runAsUser: $WORKER_RUN_AS_USER
+                      fsGroup: $WORKER_RUN_AS_USER
+                      seccompProfile:
+                        type: RuntimeDefault
+                    containers:
+                      - name: stagecheck
+                        image: alpine/k8s:1.30.3
+                        securityContext:
+                          allowPrivilegeEscalation: false
+                          capabilities:
+                            drop: ["ALL"]
+                        envFrom:
+                          - secretRef:
+                              name: backup-chain-credentials
+                        env:
+                          - name: APP_NAME
+                            value: "$APP_NAME"
+                          - name: RUN_ID
+                            value: "$RUN_ID"
+                          - name: UPLOAD_ENABLED
+                            value: "$UPLOAD_ENABLED"
+                        command: ["/bin/sh", "/scripts/stagecheck.sh"]
+                        volumeMounts:
+                          - name: stage
+                            mountPath: /stage
+                          - name: scripts
+                            mountPath: /scripts
+                    volumes:
+                      - name: stage
+                        persistentVolumeClaim:
+                          claimName: $STAGE_PVC
+                      - name: scripts
+                        configMap:
+                          name: backup-worker-script
+                  EOF
                   }
 
                   create_dbdump_pod() {
@@ -263,12 +298,12 @@ spec:
                   EOF
                   }
 
-                  create_dbupload_pod() {
+                  create_dbstage_pod() {
                     kubectl apply -f - << EOF
                   apiVersion: v1
                   kind: Pod
                   metadata:
-                    name: $DBUPLOAD_POD
+                    name: $DBSTAGE_POD
                     namespace: $NAMESPACE
                     labels:
                       app: backup-worker
@@ -281,56 +316,7 @@ spec:
                       seccompProfile:
                         type: RuntimeDefault
                     containers:
-                      - name: dbupload
-                        image: alpine/k8s:1.30.3
-                        securityContext:
-                          allowPrivilegeEscalation: false
-                          capabilities:
-                            drop: ["ALL"]
-                        envFrom:
-                          - secretRef:
-                              name: backup-chain-credentials
-                        env:
-                          - name: APP_NAME
-                            value: "$APP_NAME"
-                          - name: RUN_ID
-                            value: "$RUN_ID"
-                        command: ["/bin/sh", "/scripts/dbupload.sh"]
-                        volumeMounts:
-                          - name: dbdump-local
-                            mountPath: /dbdump
-                            readOnly: true
-                          - name: scripts
-                            mountPath: /scripts
-                    volumes:
-                      - name: dbdump-local
-                        persistentVolumeClaim:
-                          claimName: $DBDUMP_PVC
-                      - name: scripts
-                        configMap:
-                          name: backup-worker-script
-                  EOF
-                  }
-
-                  create_worker_pod() {
-                    kubectl apply -f - << EOF
-                  apiVersion: v1
-                  kind: Pod
-                  metadata:
-                    name: $WORKER_POD
-                    namespace: $NAMESPACE
-                    labels:
-                      app: backup-worker
-                  spec:
-                    restartPolicy: Never
-                    securityContext:
-                      runAsNonRoot: true
-                      runAsUser: $WORKER_RUN_AS_USER
-                      fsGroup: $WORKER_RUN_AS_USER
-                      seccompProfile:
-                        type: RuntimeDefault
-                    containers:
-                      - name: worker
+                      - name: dbstage
                         image: alpine/k8s:1.30.3
                         securityContext:
                           allowPrivilegeEscalation: false
@@ -346,22 +332,82 @@ spec:
                             value: "$RUN_ID"
                           - name: UPLOAD_ENABLED
                             value: "$UPLOAD_ENABLED"
-                        command: ["/bin/sh", "/scripts/backup-worker.sh"]
+                          - name: ITEM_KIND
+                            value: "db"
+                        command: ["/bin/sh", "/scripts/stage-item.sh"]
+                        volumeMounts:
+                          - name: dbdump-local
+                            mountPath: /dbdump
+                            readOnly: true
+                          - name: stage
+                            mountPath: /stage
+                          - name: scripts
+                            mountPath: /scripts
+                    volumes:
+                      - name: dbdump-local
+                        persistentVolumeClaim:
+                          claimName: $DBDUMP_PVC
+                      - name: stage
+                        persistentVolumeClaim:
+                          claimName: $STAGE_PVC
+                      - name: scripts
+                        configMap:
+                          name: backup-worker-script
+                  EOF
+                  }
+
+                  create_filestage_pod() {
+                    kubectl apply -f - << EOF
+                  apiVersion: v1
+                  kind: Pod
+                  metadata:
+                    name: $FILESTAGE_POD
+                    namespace: $NAMESPACE
+                    labels:
+                      app: backup-worker
+                  spec:
+                    restartPolicy: Never
+                    securityContext:
+                      runAsNonRoot: true
+                      runAsUser: $WORKER_RUN_AS_USER
+                      fsGroup: $WORKER_RUN_AS_USER
+                      seccompProfile:
+                        type: RuntimeDefault
+                    containers:
+                      - name: filestage
+                        image: alpine/k8s:1.30.3
+                        securityContext:
+                          allowPrivilegeEscalation: false
+                          capabilities:
+                            drop: ["ALL"]
+                        envFrom:
+                          - secretRef:
+                              name: backup-chain-credentials
+                        env:
+                          - name: APP_NAME
+                            value: "$APP_NAME"
+                          - name: RUN_ID
+                            value: "$RUN_ID"
+                          - name: UPLOAD_ENABLED
+                            value: "$UPLOAD_ENABLED"
+                          - name: ITEM_KIND
+                            value: "files"
+                        command: ["/bin/sh", "/scripts/stage-item.sh"]
                         volumeMounts:
                           - name: clone-data
                             mountPath: /data
                             readOnly: true
-                          - name: scratch
-                            mountPath: /scratch
+                          - name: stage
+                            mountPath: /stage
                           - name: scripts
                             mountPath: /scripts
                     volumes:
                       - name: clone-data
                         persistentVolumeClaim:
                           claimName: $CLONE_PVC
-                      - name: scratch
+                      - name: stage
                         persistentVolumeClaim:
-                          claimName: $SCRATCH_PVC
+                          claimName: $STAGE_PVC
                       - name: scripts
                         configMap:
                           name: backup-worker-script
@@ -370,6 +416,25 @@ spec:
 
                   trap cleanup EXIT
                   trap 'exit 143' TERM INT
+
+                  log "PHASE 0: checking the staging volume (a previous backup still waiting for its upload must not be overwritten)"
+                  create_stagecheck_pod
+                  if wait_pod "$STAGECHECK_POD" 900; then
+                    log "Staging volume is free"
+                    capture_and_delete_pods "$STAGECHECK_POD"
+                  else
+                    SC_EXIT=$(kubectl get pod "$STAGECHECK_POD" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode}' 2>/dev/null || echo "")
+                    capture_and_delete_pods "$STAGECHECK_POD"
+                    if [ "$SC_EXIT" = "3" ]; then
+                      FILE_STATUS="SKIPPED_PREVIOUS_UPLOAD_NOT_FINISHED"
+                      DB_DUMP_STATUS="SKIPPED"
+                      log "RESULT - Files: ${FILE_STATUS} | Database: dump=${DB_DUMP_STATUS} - the previous backup is still being uploaded; no snapshot taken, Nextcloud untouched"
+                      exit 0
+                    fi
+                    FILE_STATUS="FAILED"
+                    log "FATAL: the stage check failed (exit code '${SC_EXIT}') - no snapshot taken, Nextcloud untouched"
+                    exit 1
+                  fi
 
                   log "PHASE 1: brief maintenance window - snapshot AND db dump must both capture the exact same consistent moment"
                   MAINTENANCE_ON="yes"
@@ -444,27 +509,26 @@ spec:
                   fi
 
                   if [ "$DB_PROCESS_STATUS" = "SUCCEEDED" ] && [ "$UPLOAD_ENABLED" = "true" ]; then
-                    log "DB: encrypting and uploading the verified dump to both chains"
-                    create_dbupload_pod
-                    if wait_pod "$DBUPLOAD_POD" 7200; then
-                      DB_UPLOAD_STATUS="SUCCEEDED"
+                    log "DB: encrypting the verified dump into the staging volume (keys go to both vaults first)"
+                    create_dbstage_pod
+                    if wait_pod "$DBSTAGE_POD" 3600; then
+                      DB_STAGE_STATUS="STAGED"
                     else
-                      DB_UPLOAD_STATUS="FAILED"
+                      DB_STAGE_STATUS="FAILED"
                     fi
-                    capture_and_delete_pods "$DBUPLOAD_POD"
+                    capture_and_delete_pods "$DBSTAGE_POD"
                   elif [ "$DB_PROCESS_STATUS" = "SUCCEEDED" ]; then
-                    log "TEST MODE (uploadEnabled=false): dump verified, upload skipped"
-                    DB_UPLOAD_STATUS="SKIPPED_TEST_MODE"
+                    log "TEST MODE (uploadEnabled=false): dump verified, nothing staged"
+                    DB_STAGE_STATUS="SKIPPED_TEST_MODE"
                   fi
 
                   if [ "$SNAP_READY" != "yes" ]; then
                     log "FATAL: snapshot never became ready - aborting file backup"
                     FILE_STATUS="FAILED"
                   else
-                    SIZED_WITH_HEADROOM=$(compute_sized_with_headroom)
                     CLONE_SIZE=$(kubectl get volumesnapshot "$SNAPSHOT_NAME" -n "$NAMESPACE" -o jsonpath='{.status.restoreSize}' 2>/dev/null || echo "")
                     if [ -z "$CLONE_SIZE" ]; then CLONE_SIZE=$(kubectl get pvc "$PVC_NAME" -n "$NAMESPACE" -o jsonpath='{.status.capacity.storage}'); fi
-                    log "Clone size (must equal the snapshot size exactly) = $CLONE_SIZE; scratch size (+10% headroom) = $SIZED_WITH_HEADROOM"
+                    log "Clone size (must equal the snapshot size exactly) = $CLONE_SIZE"
 
                     kubectl apply -f - << EOF
                   apiVersion: v1
@@ -485,37 +549,22 @@ spec:
                         storage: $CLONE_SIZE
                   EOF
 
-                    kubectl apply -f - << EOF
-                  apiVersion: v1
-                  kind: PersistentVolumeClaim
-                  metadata:
-                    name: $SCRATCH_PVC
-                    namespace: $NAMESPACE
-                  spec:
-                    storageClassName: longhorn-general-single-replica
-                    accessModes:
-                      - ReadWriteOnce
-                    resources:
-                      requests:
-                        storage: $SIZED_WITH_HEADROOM
-                  EOF
-
                     if wait_pvc_bound "$CLONE_PVC" 120; then
-                      log "Clone PVC bound. Starting worker pod (this will wait for the full clone to complete before it can actually read /data - expect this to take a real while on the slow tier)"
-                      create_worker_pod
-                      if wait_pod "$WORKER_POD" 57600; then
-                        if [ "$UPLOAD_ENABLED" = "true" ]; then FILE_STATUS="SUCCEEDED"; else FILE_STATUS="VERIFIED_UPLOAD_SKIPPED"; fi
+                      log "Clone PVC bound. Starting the file stage pod (it cannot read /data until the full clone is complete - expect hours on the slow tier)"
+                      create_filestage_pod
+                      if wait_pod "$FILESTAGE_POD" 43200; then
+                        if [ "$UPLOAD_ENABLED" = "true" ]; then FILE_STATUS="STAGED"; else FILE_STATUS="VERIFIED_NOT_STAGED_TEST_MODE"; fi
                       else
                         FILE_STATUS="FAILED"
                       fi
-                      capture_and_delete_pods "$WORKER_POD"
+                      capture_and_delete_pods "$FILESTAGE_POD"
                     else
                       log "Clone PVC never bound - aborting file backup"
                       FILE_STATUS="FAILED"
                     fi
                   fi
 
-                  log "RESULT - Files: ${FILE_STATUS} | Database: dump=${DB_DUMP_STATUS} process=${DB_PROCESS_STATUS} upload=${DB_UPLOAD_STATUS}"
+                  log "RESULT - Files: ${FILE_STATUS} | Database: dump=${DB_DUMP_STATUS} process=${DB_PROCESS_STATUS} stage=${DB_STAGE_STATUS}"
                   log "Backup run $RUN_ID finished"
           volumes:
             - name: notify-script

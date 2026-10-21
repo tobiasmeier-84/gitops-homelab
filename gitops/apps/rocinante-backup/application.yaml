@@ -15,7 +15,11 @@ spec:
         namespace: rocinante
         pvcName: rocinante-nextcloud-nextcloud
         pvcSize: 250Gi
-        schedule: "0 0 21 10 *"
+        schedule: "0 6 * * 6"            # PREPARE: Saturday 06:00 (snapshot, compress, encrypt, stage)
+        uploadSchedule: "1 0 * * *"      # UPLOAD window opens every night at 00:01
+        uploadWindowMinutes: 479         # ... and closes at 08:00 (resumes the next night if not finished)
+        uploadMaxBandwidthKBps: 0        # 0 = unlimited; e.g. 6144 = about 6 MB/s
+        timeZone: Europe/Zurich
         uploadEnabled: true
         workerRunAsUser: 33
   destination:
