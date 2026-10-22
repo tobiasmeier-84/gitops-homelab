@@ -51,7 +51,7 @@ spec:
                 - nextcloud.app.solsys.dev
 
         image:
-          tag: "34.0.4-apache"
+          tag: "34.0.5-apache"
 
         cronjob:
           enabled: true
