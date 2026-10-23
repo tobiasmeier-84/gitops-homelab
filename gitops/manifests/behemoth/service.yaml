@@ -1,0 +1,19 @@
+# Plex client port. NodePort 32400 is inside the default NodePort range (30000-32767).
+# externalTrafficPolicy Local: only the node that runs the pod (rhea) answers, other nodes fail
+# HAProxy's health check; the real client IP is preserved.
+apiVersion: v1
+kind: Service
+metadata:
+  name: behemoth
+  namespace: behemoth
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: behemoth
+  ports:
+    - name: plex
+      port: 32400
+      targetPort: 32400
+      nodePort: 32400
+      protocol: TCP

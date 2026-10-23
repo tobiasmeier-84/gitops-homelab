@@ -19,21 +19,18 @@ spec:
     spec:
       nodeSelector:
         kubernetes.io/hostname: rhea
-      initContainers:
-        # A fresh Longhorn volume is root-owned; hand the top-level directory to the Plex uid.
-        # Non-recursive on purpose. Uses the Plex image, so no extra image to pull.
-        - name: config-owner
-          image: plexinc/pms-docker:1.43.5.11029-6bf8af3f0
-          command: ["sh", "-c", "chown 1000:1000 /config"]
-          securityContext:
-            runAsUser: 0
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-              add: ["CHOWN"]
-          volumeMounts:
-            - name: config
-              mountPath: /config
+      # Cluster enforces PodSecurity "restricted": no hostPort, no root, seccomp required.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        # Kubelet hands the volumes to group 1000 (fresh Longhorn volume is root-owned).
+        # OnRootMismatch: only the top-level directory is checked, so no recursive chown
+        # of the media tree on later starts.
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: plex
           image: plexinc/pms-docker:1.43.5.11029-6bf8af3f0
@@ -56,7 +53,6 @@ spec:
           ports:
             - name: plex
               containerPort: 32400
-              hostPort: 32400
               protocol: TCP
           readinessProbe:
             httpGet:
@@ -78,9 +74,6 @@ spec:
             limits:
               memory: 6Gi
           securityContext:
-            runAsUser: 1000
-            runAsGroup: 1000
-            runAsNonRoot: true
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
