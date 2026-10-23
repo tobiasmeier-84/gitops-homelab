@@ -19,14 +19,9 @@ spec:
     spec:
       nodeSelector:
         kubernetes.io/hostname: rhea
-      # Cluster enforces PodSecurity "restricted": no hostPort, no root, seccomp required.
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
-        # Kubelet hands the volumes to group 1000 (fresh Longhorn volume is root-owned).
-        # OnRootMismatch: only the top-level directory is checked, so no recursive chown
-        # of the media tree on later starts.
+        # Volumes are handed to group 1000. OnRootMismatch: only the top-level directory is
+        # checked, so no recursive chown of the media tree on later starts.
         fsGroup: 1000
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
@@ -38,6 +33,11 @@ spec:
           env:
             - name: TZ
               value: Europe/Zurich
+            # The image starts as root (s6) and runs Plex itself as this uid/gid.
+            - name: PLEX_UID
+              value: "1000"
+            - name: PLEX_GID
+              value: "1000"
             # Only needed for the first start (token is valid for 4 minutes). Created by hand,
             # never committed:  kubectl -n behemoth create secret generic plex-claim --from-literal=token=claim-XXXX
             - name: PLEX_CLAIM
@@ -76,7 +76,9 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
+              # Only what s6 needs to chown /config, signal services and drop to uid 1000.
               drop: ["ALL"]
+              add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "KILL", "SETGID", "SETUID"]
           volumeMounts:
             - name: config
               mountPath: /config
@@ -84,9 +86,6 @@ spec:
               mountPath: /data
             - name: transcode
               mountPath: /transcode
-            # s6-overlay (init system of the Plex image) needs a writable /run when not root.
-            - name: run
-              mountPath: /run
       volumes:
         - name: config
           persistentVolumeClaim:
@@ -97,7 +96,3 @@ spec:
         - name: transcode
           emptyDir:
             sizeLimit: 20Gi
-        - name: run
-          emptyDir:
-            medium: Memory
-            sizeLimit: 64Mi

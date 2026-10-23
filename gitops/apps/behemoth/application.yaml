@@ -18,3 +18,11 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+    # The Plex image starts as root and drops to PLEX_UID/PLEX_GID itself, which PodSecurity
+    # "restricted" forbids. Only this namespace is on baseline; warn/audit keep reporting restricted.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: baseline
+        pod-security.kubernetes.io/enforce-version: latest
+        pod-security.kubernetes.io/warn: restricted
+        pod-security.kubernetes.io/audit: restricted
