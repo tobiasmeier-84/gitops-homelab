@@ -45,6 +45,10 @@ spec:
                   value: "{{ .Values.uploadMaxBandwidthKBps }}"
                 - name: CHUNK_MIB
                   value: "{{ .Values.chunkMiB }}"
+                - name: RETAIN_DAILY
+                  value: "{{ .Values.retention.daily }}"
+                - name: RETAIN_WEEKLY
+                  value: "{{ .Values.retention.weekly }}"
               envFrom:
                 - secretRef:
                     name: backup-chain-credentials

@@ -54,6 +54,8 @@ spec:
                   value: "{{ .Values.dbPort }}"
                 - name: UPLOAD_ENABLED
                   value: "{{ .Values.uploadEnabled }}"
+                - name: WEEKLY_DAY
+                  value: "{{ .Values.retention.weeklyDay }}"
               envFrom:
                 - secretRef:
                     name: backup-chain-credentials
@@ -84,7 +86,10 @@ spec:
                   DB_PROCESS_STATUS="SKIPPED"
                   DB_STAGE_STATUS="SKIPPED"
                   MAINTENANCE_ON="no"
-                  export RUN_ID APP_NAME
+                  # Retention class of this run: the run on the weekly weekday (ISO, 1=Mon..7=Sun, UTC) is "weekly", all others "daily".
+                  BACKUP_CLASS="daily"
+                  if [ -n "$WEEKLY_DAY" ] && [ "$WEEKLY_DAY" != "0" ] && [ "$(date -u +%u)" = "$WEEKLY_DAY" ]; then BACKUP_CLASS="weekly"; fi
+                  export RUN_ID APP_NAME BACKUP_CLASS
 
                   : > /tmp/worker-output.log
 
@@ -193,6 +198,8 @@ spec:
                             value: "$RUN_ID"
                           - name: UPLOAD_ENABLED
                             value: "$UPLOAD_ENABLED"
+                          - name: BACKUP_CLASS
+                            value: "$BACKUP_CLASS"
                         command: ["/bin/sh", "/scripts/stagecheck.sh"]
                         volumeMounts:
                           - name: stage
@@ -332,6 +339,8 @@ spec:
                             value: "$RUN_ID"
                           - name: UPLOAD_ENABLED
                             value: "$UPLOAD_ENABLED"
+                          - name: BACKUP_CLASS
+                            value: "$BACKUP_CLASS"
                           - name: ITEM_KIND
                             value: "db"
                         command: ["/bin/sh", "/scripts/stage-item.sh"]
@@ -390,6 +399,8 @@ spec:
                             value: "$RUN_ID"
                           - name: UPLOAD_ENABLED
                             value: "$UPLOAD_ENABLED"
+                          - name: BACKUP_CLASS
+                            value: "$BACKUP_CLASS"
                           - name: ITEM_KIND
                             value: "files"
                         command: ["/bin/sh", "/scripts/stage-item.sh"]
@@ -417,6 +428,7 @@ spec:
                   trap cleanup EXIT
                   trap 'exit 143' TERM INT
 
+                  log "Backup class of this run: $BACKUP_CLASS"
                   log "PHASE 0: checking the staging volume (a previous backup still waiting for its upload must not be overwritten)"
                   create_stagecheck_pod
                   if wait_pod "$STAGECHECK_POD" 900; then

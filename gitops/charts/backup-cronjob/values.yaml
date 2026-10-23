@@ -15,8 +15,19 @@ uploadEnabled: false
 timeZone: Europe/Zurich
 
 # Stage 1 "prepare": snapshot + DB dump (short Nextcloud maintenance window), clone,
-# compress, encrypt into the staging volume. Saturday 06:00 by default.
-schedule: "0 6 * * 6"
+# compress, encrypt into the staging volume. Monday, Wednesday and Saturday 06:00 by default:
+# a backup needs two upload nights (8.5 h of upload vs an 8 h window), so every second day is the
+# fastest rhythm; a prepare run is skipped while the previous backup is still being uploaded.
+schedule: "0 6 * * 1,3,6"
+
+# Retention per chain. The backup made on weeklyDay (ISO weekday 1=Mon..7=Sun, evaluated in UTC;
+# 0 = no weekly class) is a "weekly" backup (name suffix -w), all other backups are "daily".
+# Only the newest `daily` dailies and the newest `weekly` weeklies are kept; older ones and their
+# keys are removed, but only after a new backup completed on that chain.
+retention:
+  daily: 1
+  weekly: 2
+  weeklyDay: 6
 
 # Stage 2 "upload": uploads whatever is staged, resumable. Sunday 00:01 by default;
 # it stops cleanly after uploadWindowMinutes (479 = until 08:00) and resumes at the next start.

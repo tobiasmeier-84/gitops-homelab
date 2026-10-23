@@ -15,11 +15,15 @@ spec:
         namespace: rocinante
         pvcName: rocinante-nextcloud-nextcloud
         pvcSize: 250Gi
-        schedule: "0 6 * * 6"            # PREPARE: Saturday 06:00 (snapshot, compress, encrypt, stage)
+        schedule: "0 6 * * 1,3,5"        # PREPARE: Mon, Wed, Fri 06:00 (Friday = weekly backup)
         uploadSchedule: "1 0 * * *"      # UPLOAD window opens every night at 00:01
         uploadWindowMinutes: 479         # ... and closes at 08:00 (resumes the next night if not finished)
         uploadMaxBandwidthKBps: 0        # 0 = unlimited; e.g. 6144 = about 6 MB/s
         timeZone: Europe/Zurich
+        retention:
+          daily: 1          # newest daily backups kept per chain
+          weekly: 2         # newest weekly backups kept per chain
+          weeklyDay: 5      # ISO weekday of the weekly backup (5 = Friday, 0 = no weekly class)
         uploadEnabled: true
         workerRunAsUser: 33
   destination:

@@ -216,15 +216,21 @@ data:
       chain_has_key "$1" "$2.age" || chain_has_key "$1" "$2/MANIFEST"
     }
 
-    # Keeps the 2 newest COMPLETE backups; everything older, and incomplete leftovers, goes (with its key).
+    # Retention by class. A backup whose name ends in "-w" is a weekly one, everything else (including
+    # all older backups) is a daily one. Keeps the RETAIN_DAILY newest complete dailies and the
+    # RETAIN_WEEKLY newest complete weeklies; everything else, and incomplete leftovers, goes together
+    # with its key. Only ever called after a chain finished a backup completely.
     chain_prune() { # A|B regex
       chain_setup "$1" || return 0
-      log "Pruning Chain $1 (keeping the 2 newest complete backups matching $2)..."
-      _keep=0
+      _keep_d="${RETAIN_DAILY:-1}"; _keep_w="${RETAIN_WEEKLY:-2}"
+      log "Pruning Chain $1 (matching $2; keeping the $_keep_d newest daily and the $_keep_w newest weekly backups)..."
+      _kd=0; _kw=0
       for _n in $(chain_list_names "$1" "$2"); do
         if chain_is_complete "$1" "$_n"; then
-          _keep=$((_keep + 1))
-          [ "$_keep" -le 2 ] && continue
+          case "$_n" in
+            *-w) _kw=$((_kw + 1)); if [ "$_kw" -le "$_keep_w" ]; then continue; fi ;;
+            *)   _kd=$((_kd + 1)); if [ "$_kd" -le "$_keep_d" ]; then continue; fi ;;
+          esac
           log "  deleting old backup $_n"
         else
           log "  removing incomplete leftover $_n"
@@ -308,6 +314,8 @@ data:
         echo "chunks=$_n"
         echo "sha256=$(cat "$_dir/SHA256")"
         echo "created=$(cat "$_dir/CREATED")"
+        echo "class=$(cat "$_dir/CLASS" 2>/dev/null || echo daily)"
+        echo "data_as_of=$(cat "$_dir/DATA_AS_OF" 2>/dev/null || echo unknown)"
         for _f in "$_prog"/*; do echo "chunk $(basename "$_f") $(cat "$_f")"; done
       } > "$_mf"
       if ! "$AWS_PY" "$AWS" s3 cp "$_mf" "s3://$C_BUCKET/$_name/MANIFEST" --endpoint-url "$C_EP" --only-show-errors; then
@@ -367,9 +375,13 @@ data:
     apk add --no-cache --root /tmp/pkgroot --initdb --repositories-file /etc/apk/repositories --allow-untrusted age zstd aws-cli unzip curl jq || echo "apk had non-fatal post-install trigger errors (expected under non-root), continuing"
     . /scripts/chain-lib.sh
 
+    # BACKUP_CLASS=weekly marks the backup with a "-w" suffix (retention: see chain_prune).
+    CLASS="${BACKUP_CLASS:-daily}"
+    SUFFIX=""
+    if [ "$CLASS" = "weekly" ]; then SUFFIX="-w"; fi
     case "$ITEM_KIND" in
-      db)    NAME="${APP_NAME}-db-${RUN_ID}"; SRC="/dbdump/db/dump.sql"; MIN_SIZE=1024 ;;
-      files) NAME="${APP_NAME}-${RUN_ID}";    MIN_SIZE=1048576 ;;
+      db)    NAME="${APP_NAME}-db-${RUN_ID}${SUFFIX}"; SRC="/dbdump/db/dump.sql"; MIN_SIZE=1024 ;;
+      files) NAME="${APP_NAME}-${RUN_ID}${SUFFIX}";    MIN_SIZE=1048576 ;;
       *) log "FATAL: ITEM_KIND must be db or files"; exit 1 ;;
     esac
     D="/stage/$ITEM_KIND"
@@ -389,6 +401,9 @@ data:
     mkdir -p "$D"
     echo "$NAME" > "$D/NAME"
     date -u +%Y-%m-%dT%H:%M:%SZ > "$D/CREATED"
+    echo "$CLASS" > "$D/CLASS"
+    echo "$RUN_ID" > "$D/DATA_AS_OF"   # the snapshot moment (CREATED is only when staging started)
+    log "Staging $NAME (class: $CLASS)"
 
     OK=no
     on_exit() {
