@@ -17,30 +17,10 @@ resource "proxmox_storage_zfspool" "razorback" {
 }
 
 # ============================================================================
-# TACHI: ceres only. mimas/rhea migrated to direct raw-disk passthrough for
-# Longhorn's "fast" tier 2026-09-30 (real, controlled testing showed this
-# resolves a replica-ejection pattern traced to ZFS+zvol write latency on
-# the Patriot SSD and, by extension, this pool's own zvol architecture —
-# see ADR-0005 addendum). Only enceladus (ceres) retains the original
-# zvol-backed tachi disk, migration pending.
+# TACHI: REMOVED 2026-10-23. All nodes use direct raw-disk passthrough for
+# Longhorn's tiers (ADR-0005 addendum); the tachi zpool and its Proxmox storage
+# entry no longer exist on any node.
 # ============================================================================
-resource "proxmox_node_disk_zfs" "tachi" {
-  for_each = toset(["ceres"])
-
-  node_name = each.value
-  name      = "tachi"
-  raidlevel = "single"
-  devices   = ["/dev/${var.tachi_disk_id[each.value]}"]
-}
-
-resource "proxmox_storage_zfspool" "tachi" {
-  id       = "tachi"
-  nodes    = ["ceres"]
-  zfs_pool = "tachi"
-  content  = ["images"]
-
-  depends_on = [proxmox_node_disk_zfs.tachi]
-}
 
 # ============================================================================
 # CANTERBURY: REMOVED 2026-09-30. All three nodes (enceladus/mimas/rhea)
