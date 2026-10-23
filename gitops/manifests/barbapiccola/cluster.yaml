@@ -5,6 +5,17 @@ metadata:
   namespace: rocinante
 spec:
   instances: 2
+  # Never place both instances on one node: a node reboot/failure must leave a promotable standby.
+  affinity:
+    podAntiAffinityType: required
+  # Roll the standby first and promote it, instead of restarting the only writer in place.
+  primaryUpdateMethod: switchover
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
   storage:
     size: 20Gi
     storageClass: longhorn-fast

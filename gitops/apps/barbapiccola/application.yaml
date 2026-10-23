@@ -22,7 +22,6 @@ spec:
     - group: postgresql.cnpg.io
       kind: Cluster
       jsonPointers:
-        - /spec/affinity
         - /spec/enablePDB
         - /spec/enableSuperuserAccess
         - /spec/failoverDelay
@@ -34,11 +33,9 @@ spec:
         - /spec/postgresGID
         - /spec/postgresUID
         - /spec/postgresql
-        - /spec/primaryUpdateMethod
         - /spec/primaryUpdateStrategy
         - /spec/probes
         - /spec/replicationSlots
-        - /spec/resources
         - /spec/smartShutdownTimeout
         - /spec/startDelay
         - /spec/stopDelay
