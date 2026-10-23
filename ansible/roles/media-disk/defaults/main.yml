@@ -1,0 +1,15 @@
+---
+# Whole-disk passthrough from opentofu/environments/prod/rhea-media.tf (scsi7).
+media_disk_device: /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi7
+media_disk_label: plexmedia
+media_disk_mount: /mnt/behemoth
+media_disk_owner_uid: 1000
+media_disk_owner_gid: 1000
+
+# One-time wipe of the previous content. It only fires when BOTH are true:
+#   1. -e media_disk_wipe_confirmed=true is passed on the command line (never commit it)
+#   2. the disk carries exactly the expected old signature below, OR no recognised
+#      filesystem at all (e.g. leftover partition-table bytes after a plain wipefs)
+# A disk with any other recognised filesystem (e.g. ext4 plexmedia) is never wiped.
+media_disk_wipe_confirmed: false
+media_disk_expected_old_signature: "zfs_member scratch-usb"

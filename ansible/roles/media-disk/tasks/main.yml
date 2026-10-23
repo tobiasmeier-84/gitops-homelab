@@ -1,0 +1,104 @@
+---
+# behemoth media disk: wipe-once (guarded), format ext4, mount by UUID with nofail.
+- name: Resolve the real device behind the by-id path
+  command: "readlink -f {{ media_disk_device }}"
+  register: media_disk_real
+  changed_when: false
+  failed_when: media_disk_real.rc != 0 or media_disk_real.stdout == ""
+
+- name: Read current signatures of the disk and its partitions
+  command: "lsblk -nro FSTYPE,LABEL,MOUNTPOINT {{ media_disk_real.stdout }}"
+  register: media_disk_lsblk
+  changed_when: false
+
+# Fires only with the explicit command-line confirmation AND either the expected old signature
+# or a disk with no recognised filesystem at all ("bare but not clean": leftover partition-table
+# bytes after a plain wipefs). A disk with any other recognised filesystem is never wiped.
+- name: Wipe the old content (explicit confirmation + expected old signature or no filesystem)
+  when:
+    - media_disk_wipe_confirmed | bool
+    - >-
+      (media_disk_expected_old_signature in media_disk_lsblk.stdout)
+      or (media_disk_lsblk.stdout_lines | map('trim') | select | list | length == 0)
+  block:
+    - name: Refuse if anything on the disk is mounted
+      assert:
+        that: media_disk_lsblk.stdout_lines | select('search', '/') | list | length == 0
+        fail_msg: "Something on {{ media_disk_real.stdout }} is mounted - refusing to wipe."
+
+    - name: Zero the first and last 16 MiB (GPT, ZFS labels L0/L1 at the start, L2/L3 + backup GPT at the end)
+      shell: |
+        set -euo pipefail
+        dev={{ media_disk_real.stdout }}
+        size=$(blockdev --getsize64 "$dev")
+        dd if=/dev/zero of="$dev" bs=1M count=16 conv=notrunc status=none
+        dd if=/dev/zero of="$dev" bs=1M count=16 seek=$(( size / 1048576 - 16 )) conv=notrunc status=none
+        wipefs -a "$dev"
+        partprobe "$dev" || true
+        udevadm settle
+      args:
+        executable: /bin/bash
+
+    - name: Re-read signatures
+      command: "lsblk -nro FSTYPE,LABEL {{ media_disk_real.stdout }}"
+      register: media_disk_lsblk
+      changed_when: false
+
+    - name: Disk must now be bare
+      assert:
+        that: media_disk_lsblk.stdout_lines | map('trim') | select | list | length == 0
+        fail_msg: "Disk still has signatures after wipe: {{ media_disk_lsblk.stdout }}"
+
+# Own read, outside the wipe block: a skipped task inside a block still overwrites its
+# registered variable, so the guard must not reuse media_disk_lsblk.
+- name: Read signatures again (after the optional wipe)
+  command: "lsblk -nro FSTYPE,LABEL {{ media_disk_real.stdout }}"
+  register: media_disk_sig
+  changed_when: false
+
+# Safety net: with no recognised filesystem on the disk, only continue if its first MiB is
+# all zeros (= really bare). Unknown data without a signature must never be formatted blindly.
+- name: Refuse to format a disk that holds data but no recognised signature
+  command: "cmp -s -n 1048576 /dev/zero {{ media_disk_real.stdout }}"
+  changed_when: false
+  when: media_disk_sig.stdout_lines | map('trim') | select | list | length == 0
+
+# force: false -> never reformats a disk that already carries a filesystem.
+# -T largefile: one inode per MiB instead of per 16 KiB (default would waste ~230 GB on 14.6 TB).
+- name: Create ext4 (no-op when the disk already has a filesystem)
+  filesystem:
+    fstype: ext4
+    dev: "{{ media_disk_real.stdout }}"
+    opts: "-L {{ media_disk_label }} -T largefile -m 0"
+    force: false
+
+- name: Get UUID of the media disk
+  command: "blkid -s UUID -o value {{ media_disk_real.stdout }}"
+  register: media_disk_uuid
+  changed_when: false
+  failed_when: media_disk_uuid.stdout == ""
+
+- name: Create mount point
+  file:
+    path: "{{ media_disk_mount }}"
+    state: directory
+    mode: "0755"
+
+# nofail: a missing/locked disk must not block the VM's boot.
+- name: Mount the media disk persistently (by UUID)
+  mount:
+    path: "{{ media_disk_mount }}"
+    src: "UUID={{ media_disk_uuid.stdout }}"
+    fstype: ext4
+    opts: defaults,nofail,noatime
+    state: mounted
+
+# Created only AFTER the mount. If the disk is ever missing, this directory does not
+# exist, so the Plex pod fails to start instead of filling rhea's root disk.
+- name: Create the media directory on the mounted disk
+  file:
+    path: "{{ media_disk_mount }}/media"
+    state: directory
+    owner: "{{ media_disk_owner_uid }}"
+    group: "{{ media_disk_owner_gid }}"
+    mode: "0775"

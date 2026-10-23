@@ -21,6 +21,12 @@
   roles:
     - longhorn-disk
 
+- name: Prepare behemoth media disk (USB, rhea only)
+  hosts: rhea
+  tags: [media_disk]
+  roles:
+    - media-disk
+
 - name: Install Longhorn
   hosts: rke2_nodes
   roles:
