@@ -99,4 +99,13 @@ resource "proxmox_virtual_environment_vm" "this" {
   operating_system {
     type = "l26"
   }
+
+  # GUARD (2026-10-23): never update a live VM from OpenTofu. An in-place update of
+  # enceladus removed its four directly passed-through Longhorn disks (scsi3-6, set
+  # outside the provider) from the running VM; they had to be re-attached by hand.
+  # These VMs are built once; change them with qm/Ansible, or remove this guard
+  # deliberately for one reviewed change.
+  lifecycle {
+    ignore_changes = all
+  }
 }

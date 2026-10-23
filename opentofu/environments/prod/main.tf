@@ -14,8 +14,9 @@ resource "proxmox_download_file" "debian_ceres" {
 
 # ============================================================================
 # enceladus — RKE2 node 1, on ceres. First real test of the proxmox-vm
-# module — 5 NICs (all VLANs), 3 disks (OS/etcd on razorback, bulk on
-# canterbury, DB-tier on tachi). NIC order is MGMT, CLUSTER, STORAGE,
+# module — 5 NICs (all VLANs), OS/etcd disk on razorback plus four
+# direct-passthrough Longhorn disks (null_resource below, same pattern as
+# mimas; canterbury/tachi zpools no longer exist). NIC order is MGMT, CLUSTER, STORAGE,
 # DMZ-INGRESS, EGRESS — this ordering must stay consistent across every
 # VM for net0-net4 to mean the same thing everywhere.
 # ============================================================================
@@ -33,8 +34,6 @@ module "enceladus" {
 
   disks = [
     { datastore_id = "razorback", size = 300, interface = "scsi0" },   # OS + etcd
-    { datastore_id = "canterbury", size = 900, interface = "scsi1" }, # Longhorn bulk
-    { datastore_id = "tachi", size = 100, interface = "scsi2" },       # Longhorn DB tier
   ]
 
   network_interfaces = [
@@ -44,6 +43,42 @@ module "enceladus" {
     { bridge = "vmbr3", address = "10.10.40.41/24" },                                    # DMZ-INGRESS
     { bridge = "vmbr4", address = "10.10.50.41/24", gateway = "10.10.50.1" },            # EGRESS - carries default route
   ]
+}
+
+# ============================================================================
+# enceladus: direct passthrough of the four Longhorn disks (live state of VM 201,
+# verified 2026-10-23 with `qm config 201`): scsi3 "slow" (Patriot 1 TB),
+# scsi4/scsi5 "general" (2x 447 G SSD), scsi6 "fast" (NVMe, former tachi).
+# Applied via root SSH + qm set, NOT the native path_in_datastore attribute
+# (hardcoded root-only check, see the comment at null_resource.mimas_disk_passthrough).
+# Every command is guarded: it only sets a slot that is still empty, so on the
+# live VM this is a no-op. Never point it at razorback/rpool disks.
+# ============================================================================
+resource "null_resource" "enceladus_disk_passthrough" {
+  triggers = {
+    disk_c = "ata-Patriot_P210_1024GB_P210IICB25082903951"
+    disk_d = "wwn-0x500a0751271c1481"
+    disk_e = "wwn-0x500a07512720cb0f"
+    disk_f = "nvme-SAMSUNG_MZVLB512HAJQ-000H1_S3WTNX0M275286"
+  }
+
+  connection {
+    type  = "ssh"
+    host  = "10.10.10.11"
+    user  = "root"
+    agent = true
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "qm config 201 | grep -q '^scsi3:' || qm set 201 --scsi3 /dev/disk/by-id/ata-Patriot_P210_1024GB_P210IICB25082903951",
+      "qm config 201 | grep -q '^scsi4:' || qm set 201 --scsi4 /dev/disk/by-id/wwn-0x500a0751271c1481",
+      "qm config 201 | grep -q '^scsi5:' || qm set 201 --scsi5 /dev/disk/by-id/wwn-0x500a07512720cb0f",
+      "qm config 201 | grep -q '^scsi6:' || qm set 201 --scsi6 /dev/disk/by-id/nvme-SAMSUNG_MZVLB512HAJQ-000H1_S3WTNX0M275286"
+    ]
+  }
+
+  depends_on = [module.enceladus]
 }
 
 # ============================================================================
