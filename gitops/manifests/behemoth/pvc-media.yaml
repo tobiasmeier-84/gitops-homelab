@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: behemoth-media
+  namespace: behemoth
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  volumeName: behemoth-media
+  resources:
+    requests:
+      storage: 13Ti

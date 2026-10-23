@@ -1,0 +1,30 @@
+# Media library on the 14.6 TB USB disk (ext4 label plexmedia), mounted on rhea by the
+# Ansible role media-disk at /mnt/behemoth. Static local PV, pinned to rhea. Plex is therefore
+# pinned to rhea too, by design (no HA for Plex). Retain: the data outlives the claim.
+# The directory only exists while the disk is mounted, so a missing disk keeps the pod Pending
+# instead of filling rhea's root disk.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: behemoth-media
+spec:
+  capacity:
+    storage: 13Ti
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  volumeMode: Filesystem
+  claimRef:
+    namespace: behemoth
+    name: behemoth-media
+  local:
+    path: /mnt/behemoth/media
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - rhea

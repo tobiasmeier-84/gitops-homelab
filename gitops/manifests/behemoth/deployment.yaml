@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: behemoth
+  namespace: behemoth
+  labels:
+    app.kubernetes.io/name: behemoth
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: behemoth
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: behemoth
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: rhea
+      initContainers:
+        # A fresh Longhorn volume is root-owned; hand the top-level directory to the Plex uid.
+        # Non-recursive on purpose. Uses the Plex image, so no extra image to pull.
+        - name: config-owner
+          image: plexinc/pms-docker:1.43.5.11029-6bf8af3f0
+          command: ["sh", "-c", "chown 1000:1000 /config"]
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN"]
+          volumeMounts:
+            - name: config
+              mountPath: /config
+      containers:
+        - name: plex
+          image: plexinc/pms-docker:1.43.5.11029-6bf8af3f0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TZ
+              value: Europe/Zurich
+            # Only needed for the first start (token is valid for 4 minutes). Created by hand,
+            # never committed:  kubectl -n behemoth create secret generic plex-claim --from-literal=token=claim-XXXX
+            - name: PLEX_CLAIM
+              valueFrom:
+                secretKeyRef:
+                  name: plex-claim
+                  key: token
+                  optional: true
+            # Plain http until a certificate for plex.app.solsys.dev is installed; clients still use
+            # Plex's own *.plex.direct https address. Do NOT set ALLOWED_NETWORKS (it disables auth).
+            - name: ADVERTISE_IP
+              value: "http://plex.app.solsys.dev:32400/"
+          ports:
+            - name: plex
+              containerPort: 32400
+              hostPort: 32400
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /identity
+              port: 32400
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /identity
+              port: 32400
+            initialDelaySeconds: 180
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              memory: 6Gi
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: media
+              mountPath: /data
+            - name: transcode
+              mountPath: /transcode
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: behemoth-config
+        - name: media
+          persistentVolumeClaim:
+            claimName: behemoth-media
+        - name: transcode
+          emptyDir:
+            sizeLimit: 20Gi

@@ -1,0 +1,13 @@
+# Plex config + metadata database (SQLite): on the replicated SSD tier, not on the spinning USB disk.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: behemoth-config
+  namespace: behemoth
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn-general
+  resources:
+    requests:
+      storage: 30Gi
