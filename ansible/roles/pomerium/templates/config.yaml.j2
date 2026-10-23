@@ -29,6 +29,23 @@ routes:
             - claim/roles: "belt.crew"
             - claim/roles: "belt.passenger"
 
+  - from: https://behemoth.mcrn.solsys.dev
+    to:
+      - http://{{ hostvars['rhea']['rke2_dmz_ingress_ip'] }}:32400
+    allow_websockets: true
+    health_checks:
+      - timeout: 2s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 1
+        http_health_check:
+          path: /identity
+
+    policy:
+      - allow:
+          or:
+            - claim/roles: "belt.captain"
+
   - from: ssh://ceres
     to: ssh://ceres.belt.solsys.dev:22
     policy:

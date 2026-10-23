@@ -20,11 +20,23 @@ frontend https_in
     tcp-request content accept if { req.ssl_hello_type 1 }
     use_backend deimos_mcrn if { req.ssl_sni -i belt.mcrn.solsys.dev }
     use_backend deimos_mcrn if { req.ssl_sni -i deimos.mcrn.solsys.dev }
+    use_backend deimos_mcrn if { req.ssl_sni -i behemoth.mcrn.solsys.dev }
     default_backend rke2_ingress_tls
 
 backend deimos_mcrn
     mode tcp
     server deimos 10.10.40.14:443 check
+
+# Plex clients (TCP 32400, passthrough). Plex is pinned to rhea (local PV on the USB media disk),
+# so rhea is the only backend; the NodePort Service has externalTrafficPolicy Local.
+frontend plex_in
+    bind {{ vrrp_ip }}:32400
+    mode tcp
+    default_backend behemoth_plex
+
+backend behemoth_plex
+    mode tcp
+    server rhea {{ hostvars['rhea']['rke2_dmz_ingress_ip'] }}:32400 check
 
 backend rke2_ingress
     balance roundrobin

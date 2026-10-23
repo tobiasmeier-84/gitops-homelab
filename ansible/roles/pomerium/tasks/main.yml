@@ -65,16 +65,25 @@
     dest: /etc/letsencrypt/renewal-hooks/deploy/pomerium-permissions.sh
     mode: '0755'
 
-- name: Obtain certificate via certbot (DNS-01)
+# check_mode: false -> this read-only task also runs under --check, so the 'when' below can be evaluated.
+- name: Read the names the current Pomerium certificate covers
+  shell: "openssl x509 -in /etc/letsencrypt/live/deimos.mcrn.solsys.dev/fullchain.pem -noout -ext subjectAltName 2>/dev/null || true"
+  register: pomerium_cert_names
+  changed_when: false
+  check_mode: false
+
+# Issues the certificate on a fresh VM, and re-issues it (--expand) whenever a name is missing.
+# New name 2026-10-23: behemoth.mcrn.solsys.dev (Plex admin UI behind Pomerium).
+- name: Obtain or expand certificate via certbot (DNS-01)
   command: >
     certbot certonly --dns-cloudflare
     --dns-cloudflare-credentials /etc/pomerium-cloudflare-credentials.ini
     --dns-cloudflare-propagation-seconds 60
     --non-interactive --agree-tos -m admin@solsys.dev
-    -d deimos.mcrn.solsys.dev -d belt.mcrn.solsys.dev
+    --cert-name deimos.mcrn.solsys.dev --expand
+    -d deimos.mcrn.solsys.dev -d belt.mcrn.solsys.dev -d behemoth.mcrn.solsys.dev
     --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/pomerium-permissions.sh
-  args:
-    creates: /etc/letsencrypt/live/deimos.mcrn.solsys.dev/fullchain.pem
+  when: "'behemoth.mcrn.solsys.dev' not in pomerium_cert_names.stdout"
 
 - name: Deploy Pomerium config
   template:
