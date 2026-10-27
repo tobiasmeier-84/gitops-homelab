@@ -160,3 +160,21 @@ resource "cloudflare_dns_record" "office_app" {
   ttl     = 300
   proxied = false
 }
+
+resource "cloudflare_dns_record" "forscher_app" {
+  zone_id = data.cloudflare_zone.solsys_dev.id
+  name    = "forscher.app"
+  type    = "CNAME"
+  content = "dynamic.solsys.dev"
+  ttl     = 300
+  proxied = false
+}
+
+resource "cloudflare_dns_record" "ntfy_forscher_app" {
+  zone_id = data.cloudflare_zone.solsys_dev.id
+  name    = "ntfy.forscher.app"
+  type    = "CNAME"
+  content = "dynamic.solsys.dev"
+  ttl     = 300
+  proxied = false
+}
