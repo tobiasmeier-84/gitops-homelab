@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: forscher-app
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:tobiasmeier-84/forscher-app.git
+    targetRevision: main
+    path: deploy/base
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: forscher
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
