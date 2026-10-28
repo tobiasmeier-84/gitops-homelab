@@ -20,3 +20,5 @@ spec:
       - "--entryPoints.web.transport.respondingTimeouts.readTimeout=3600s"
       - "--entryPoints.web.transport.respondingTimeouts.writeTimeout=3600s"
       - "--entryPoints.web.transport.respondingTimeouts.idleTimeout=3600s"
+      - "--entryPoints.web.proxyProtocol.trustedIPs=10.42.0.0/32,10.42.1.0/32,10.42.2.0/32,10.10.10.41/32,10.10.10.42/32,10.10.10.43/32"
+      - "--entryPoints.websecure.proxyProtocol.trustedIPs=10.42.0.0/32,10.42.1.0/32,10.42.2.0/32,10.10.10.41/32,10.10.10.42/32,10.10.10.43/32"

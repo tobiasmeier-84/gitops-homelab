@@ -81,6 +81,7 @@
     dest: /var/lib/rancher/rke2/server/manifests/rke2-traefik-config.yaml
     mode: '0644'
   when: inventory_hostname == groups['rke2_nodes'][0]
+  tags: [traefik_config]
 
 - name: Deploy Multus HelmChartConfig — enables Whereabouts for cluster-wide IPAM
   template:
