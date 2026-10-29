@@ -36,10 +36,7 @@ uploadWindowMinutes: 479
 
 # Upload bandwidth cap in KB/s for the whole upload, 0 = unlimited.
 # Raise/remove it when the network bottleneck is gone. 6144 = about 6 MB/s = 48 Mbit/s.
-# TEMPORARY (2026-10-29): capped to test whether the full-speed upload makes the
-# router/link collapse around 00:00-01:00 (two nights in a row). Revisit after the
-# MikroTik replaces the RV320; 0 = unlimited.
-uploadMaxBandwidthKBps: 3000
+uploadMaxBandwidthKBps: 0
 
 # Upload granularity: the encrypted file is uploaded in chunks of this size, finished chunks are
 # never repeated. Restore needs all chunks of a backup (see ADR-0005 restore recipe).

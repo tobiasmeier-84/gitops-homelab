@@ -18,7 +18,7 @@ spec:
         schedule: "0 6 * * 1,3,5"        # PREPARE: Mon, Wed, Fri 06:00 (Friday = weekly backup)
         uploadSchedule: "1 0 * * *"      # UPLOAD window opens every night at 00:01
         uploadWindowMinutes: 479         # ... and closes at 08:00 (resumes the next night if not finished)
-        uploadMaxBandwidthKBps: 0        # 0 = unlimited; e.g. 6144 = about 6 MB/s
+        uploadMaxBandwidthKBps: 3000     # TEMPORARY 2026-10-29 (network collapse test, revisit after MikroTik); 0 = unlimited
         timeZone: Europe/Zurich
         retention:
           daily: 1          # newest daily backups kept per chain
