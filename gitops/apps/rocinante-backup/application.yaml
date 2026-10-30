@@ -24,7 +24,7 @@ spec:
           daily: 1          # newest daily backups kept per chain
           weekly: 2         # newest weekly backups kept per chain
           weeklyDay: 5      # ISO weekday of the weekly backup (5 = Friday, 0 = no weekly class)
-        uploadEnabled: true
+        uploadEnabled: false
         workerRunAsUser: 33
   destination:
     server: https://kubernetes.default.svc
