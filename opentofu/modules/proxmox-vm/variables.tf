@@ -19,6 +19,12 @@ variable "cpu_cores" {
   default     = 4
 }
 
+variable "cpu_type" {
+  description = "Emulated CPU model (ADR-0052). Default qemu64 is the historic behaviour of VMs built before the ADR; the RKE2 nodes pass x86-64-v2-AES. Only used when the VM is created: the lifecycle guard in main.tf keeps OpenTofu from changing live VMs, so an existing VM is changed with qm set --cpu plus a full stop/start."
+  type        = string
+  default     = "qemu64"
+}
+
 variable "memory_mb" {
   description = "RAM in MB"
   type        = number
