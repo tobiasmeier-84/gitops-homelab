@@ -1,3 +1,10 @@
 ---
 rke2_version: "v1.36.2+rke2r1"
 pella_record_id: "c98defdaa228de24c1a14342218e4923"
+
+# kubectl-cnpg plugin (role rke2-kubectl-env, tag cnpg_plugin). The version must
+# match the CloudNativePG operator deployed by gitops/apps/cloudnative-pg (chart
+# 0.29.0 = operator 1.30.0). The release publishes no checksum file, so the sha256
+# of the tarball is pinned here; recompute it when bumping the version.
+cnpg_plugin_version: "1.30.0"
+cnpg_plugin_sha256: "33784dc3b61edb0ddb1a68db6ef045bd32daace5db2ec1f0a02e0e8185eef7eb"

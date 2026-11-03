@@ -25,3 +25,43 @@
     line: 'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/var/lib/rancher/rke2/bin"'
     state: present
   become: true
+
+# ---- kubectl-cnpg plugin: planned CloudNativePG switchovers during node maintenance ----
+# Versioned directory + symlink, so a version bump replaces the binary cleanly.
+# check_mode: false on the download so that --check can still look inside the archive.
+
+- name: Download kubectl-cnpg plugin
+  ansible.builtin.get_url:
+    url: "https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v{{ cnpg_plugin_version }}/kubectl-cnpg_{{ cnpg_plugin_version }}_linux_x86_64.tar.gz"
+    dest: "/tmp/kubectl-cnpg-{{ cnpg_plugin_version }}.tar.gz"
+    checksum: "sha256:{{ cnpg_plugin_sha256 }}"
+    mode: '0644'
+  check_mode: false
+  tags: [cnpg_plugin]
+
+- name: Create versioned directory for kubectl-cnpg
+  ansible.builtin.file:
+    path: "/opt/kubectl-cnpg/{{ cnpg_plugin_version }}"
+    state: directory
+    mode: '0755'
+  tags: [cnpg_plugin]
+
+- name: Extract the kubectl-cnpg binary
+  ansible.builtin.unarchive:
+    src: "/tmp/kubectl-cnpg-{{ cnpg_plugin_version }}.tar.gz"
+    dest: "/opt/kubectl-cnpg/{{ cnpg_plugin_version }}"
+    remote_src: true
+    include:
+      - kubectl-cnpg
+    creates: "/opt/kubectl-cnpg/{{ cnpg_plugin_version }}/kubectl-cnpg"
+  # --check on a node without the directory cannot unpack into it (the directory task only simulates)
+  ignore_errors: "{{ ansible_check_mode }}"
+  tags: [cnpg_plugin]
+
+- name: Link kubectl-cnpg into /usr/local/bin (kubectl finds plugins on PATH)
+  ansible.builtin.file:
+    src: "/opt/kubectl-cnpg/{{ cnpg_plugin_version }}/kubectl-cnpg"
+    dest: /usr/local/bin/kubectl-cnpg
+    state: link
+    force: true
+  tags: [cnpg_plugin]
