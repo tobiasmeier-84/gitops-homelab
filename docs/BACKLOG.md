@@ -223,3 +223,17 @@ and needs updating to match — otherwise the docs actively mislead anyone
 - **`rocinante-stage` volume has one replica** (on rhea) - draining rhea needs the
   temporary Longhorn drain policy in the node-maintenance runbook. Acceptable for
   staging data; revisit if it ever holds the only copy of a backup for long.
+
+## Backup baseline / template (ADR-0054)
+- One shared backup baseline for every app: merge `app-backup` and `backup-cronjob` so both use one
+  script library (today it is duplicated). Goal: a new app is a values file.
+- One central `backup_apps` list that drives all four stacks (OVH, B2, Azure, Bitwarden) and the
+  Ansible secrets role; today the app is named in each.
+- OVH: no lifecycle backstop (provider has none) - add via the S3 API or a CronJob; check that
+  bucket versioning is off (`aws s3api get-bucket-versioning`).
+- Expiry/rotation: Azure client secret and Bitwarden access token expire (1 year) - add a reminder
+  and a rotation procedure.
+- App-specific verify hook in the worker (e.g. `PRAGMA integrity_check` on the restored SQLite copy).
+- Restore drill for forscher; record the result in docs/runbooks/app-backup-restore.md.
+- Bitwarden project/machine account are manual - revisit when the provider supports them.
+- Rename `uploadEnabled` in `backup-cronjob` (misleading name) when the baseline is merged.

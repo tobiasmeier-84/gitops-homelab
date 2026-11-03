@@ -8,3 +8,11 @@ pella_record_id: "c98defdaa228de24c1a14342218e4923"
 # of the tarball is pinned here; recompute it when bumping the version.
 cnpg_plugin_version: "1.30.0"
 cnpg_plugin_sha256: "33784dc3b61edb0ddb1a68db6ef045bd32daace5db2ec1f0a02e0e8185eef7eb"
+
+# Apps with their own backup credentials (ADR-0054; the same names are in `backup_apps` of the
+# OpenTofu stacks backup-infra-backblaze / -ovhcloud / -azure). Role app-backup-secrets.
+app_backups:
+  - app: forscher
+    namespace: forscher
+# Controller-side directory with app-backup-<app>.json, written by scripts/app-backup-creds.sh
+app_backup_creds_dir: "{{ lookup('env', 'HOME') }}/.homelab"

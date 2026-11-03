@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.appName }}-backup-scripts
+  namespace: {{ .Values.namespace }}
+data:
+  chain-lib.sh: |
+{{ .Files.Get "files/chain-lib.sh" | indent 4 }}
+  backup.sh: |
+{{ .Files.Get "files/backup.sh" | indent 4 }}
+  orchestrate.sh: |
+{{ .Files.Get "files/orchestrate.sh" | indent 4 }}
+  selftest.sh: |
+{{ .Files.Get "files/selftest.sh" | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.appName }}-backup-notify
+  namespace: {{ .Values.namespace }}
+data:
+  notify.py: |
+{{ .Files.Get "files/notify.py" | indent 4 }}

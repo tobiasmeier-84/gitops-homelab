@@ -1,0 +1,66 @@
+---
+# ADR-0054: per-app backup credentials, one set of secrets per app namespace in `app_backups`
+# (ansible/group_vars/rke2_nodes.yml). The credentials file is produced on the controller by
+# scripts/app-backup-creds.sh; nothing secret is ever printed (no_log) or stored in the repo.
+
+- name: Check that the credentials file of every app exists on the controller
+  ansible.builtin.stat:
+    path: "{{ app_backup_creds_dir }}/app-backup-{{ item.app }}.json"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  loop: "{{ app_backups }}"
+  loop_control:
+    label: "{{ item.app }}"
+  register: app_backup_creds_files
+  tags: [app_backup]
+
+- name: Fail loudly if one is missing
+  ansible.builtin.fail:
+    msg: "No credentials file for '{{ item.item.app }}' - run scripts/app-backup-creds.sh {{ item.item.app }} first."
+  run_once: true
+  loop: "{{ app_backup_creds_files.results }}"
+  loop_control:
+    label: "{{ item.item.app }}"
+  when: not item.stat.exists
+  tags: [app_backup]
+
+- name: Create the backup chain credentials secret in each app namespace
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: backup-chain-credentials
+        namespace: "{{ item.namespace }}"
+      type: Opaque
+      stringData: "{{ lookup('file', app_backup_creds_dir ~ '/app-backup-' ~ item.app ~ '.json') | from_json }}"
+  loop: "{{ app_backups }}"
+  loop_control:
+    label: "{{ item.app }}"
+  no_log: true
+  when: inventory_hostname == groups['rke2_nodes'][0]
+  tags: [app_backup]
+
+# Exception to "one credential per purpose" (ADR-0054): the mail account that sends the
+# backup notifications is shared. It cannot be created as code and only allows sending mail.
+- name: Create the backup SMTP credentials secret in each app namespace
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/rke2/rke2.yaml
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: backup-smtp-credentials
+        namespace: "{{ item.namespace }}"
+      type: Opaque
+      stringData:
+        smtp_username: "{{ lookup('env', 'BACKUP_SMTP_USERNAME') }}"
+        smtp_password: "{{ lookup('env', 'BACKUP_SMTP_PASSWORD') }}"
+  loop: "{{ app_backups }}"
+  loop_control:
+    label: "{{ item.app }}"
+  no_log: true
+  when: inventory_hostname == groups['rke2_nodes'][0]
+  tags: [app_backup]

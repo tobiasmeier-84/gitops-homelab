@@ -1,0 +1,4 @@
+apiVersion: v2
+name: app-backup
+description: Reusable snapshot-based encrypted dual-chain backup for any app's PVC, with a hard maximum backup age (privacy baseline, ADR-0054)
+version: 0.1.0

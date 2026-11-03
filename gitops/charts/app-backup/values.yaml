@@ -1,0 +1,44 @@
+# ---- required per app ------------------------------------------------------------------
+appName: ""            # short name; backups are named <appName>-<YYYYMMDD>-<HHMMSS> (UTC) and the
+                       # per-app credentials only reach names with this prefix (ADR-0054)
+namespace: ""          # namespace of the app and of its backup-chain-credentials secret
+pvcName: ""            # the PVC to back up
+workerRunAsUser: null  # uid that can read the files on the volume (the app's uid)
+workerRunAsGroup: null # gid of the same; defaults to the uid
+
+# ---- schedule and retention --------------------------------------------------------------
+schedule: "30 3 * * *"
+timeZone: Europe/Zurich
+# HARD maximum age of any backup in days. Enforced by age at the start and end of every run
+# (also when the backup itself failed) in both chains, together with the encryption keys.
+maxAgeDays: 13
+
+# ---- behaviour -----------------------------------------------------------------------------
+# dryRun: snapshot + clone + read/compress the data, but no keys, no uploads, no pruning.
+dryRun: false
+# Mail on failure always; on success only on this ISO weekday (1=Mon..7=Sun, 0=never) as a heartbeat.
+notifySuccessWeekday: 1
+notifyEmail: admin@solsys.dev
+
+# ---- storage -----------------------------------------------------------------------------------
+snapshotClass: longhorn-snapshot-vsc
+cloneStorageClass: longhorn-general-single-replica
+workDirSize: 2Gi          # scratch space for the encrypted archive (emptyDir)
+chunkMiB: 512             # upload granularity
+uploadMaxBandwidthKBps: 0 # 0 = unlimited
+
+chains:
+  a:
+    bucket: scopuli-chain-a-backup
+    endpoint: https://s3.eu-west-par.io.cloud.ovh.net
+  b:
+    bucket: barbapiccola-chain-b-backup
+    endpoint: https://s3.eu-central-003.backblazeb2.com
+
+image: alpine/k8s:1.30.3
+
+# The selftest checks that this app's credentials cannot open this OTHER Key Vault (the Nextcloud one).
+probeOtherVaultUrl: https://kv-solsys-chainb.vault.azure.net
+
+# Where the Kubernetes API answers after service NAT (the RKE2 server nodes). Used by the orchestrator.
+kubeApiCidr: 10.10.10.0/24

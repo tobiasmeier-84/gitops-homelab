@@ -108,3 +108,9 @@
   hosts: rke2_nodes
   roles:
     - backup-smtp-secret
+
+- name: Configure per-app backup credentials (ADR-0054)
+  hosts: rke2_nodes
+  tags: [app_backup]
+  roles:
+    - app-backup-secrets

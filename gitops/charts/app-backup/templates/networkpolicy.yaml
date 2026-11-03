@@ -1,0 +1,29 @@
+# The namespace has default-deny. The backup pods (orchestrator, worker, selftest) need: DNS (the
+# namespace-wide allow-dns policy already covers it), the Kubernetes API (orchestrator), and public
+# HTTPS / SMTPS to the buckets, vaults, package mirrors and the mail server. Private ranges stay closed,
+# the same pattern as the app's own egress policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.appName }}-backup-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: {{ .Values.appName }}-backup
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.kubeApiCidr | quote }}
+      ports:
+        - { port: 6443, protocol: TCP }
+        - { port: 443, protocol: TCP }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]
+      ports:
+        - { port: 443, protocol: TCP }
+        - { port: 465, protocol: TCP }
+        - { port: 80, protocol: TCP }

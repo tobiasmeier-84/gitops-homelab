@@ -77,3 +77,4 @@ The single governing principle across every decision in this document: **if this
 | Network | Router replacement (RV320 → MikroTik) | Faithful config translation, WireGuard migration, IPv6 disabled | [0051](adr/0051-mikrotik-router-replacement.md) |
 | Cluster/GitOps | RKE2 node VM CPU type | x86-64-v2-AES instead of qemu64, applied live via qm set, one node at a time | [0052](adr/0052-rke2-node-cpu-type.md) |
 | Network/Platform | QEMU guest agent | Installed and enabled on every VM, by default in the OpenTofu module and in the Ansible common role | [0053](adr/0053-qemu-guest-agent-on-all-vms.md) |
+| Platform | Per-app backup | Hard maximum age (13 days, privacy by design), dedicated prefix-scoped credentials per app, chart app-backup | [0054](adr/0054-per-app-backup-with-hard-maximum-age.md) |
