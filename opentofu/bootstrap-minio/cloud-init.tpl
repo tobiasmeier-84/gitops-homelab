@@ -13,6 +13,7 @@ users:
 package_update: true
 packages:
   - wget
+  - qemu-guest-agent
 
 write_files:
   - path: /etc/systemd/system/minio.service
@@ -49,3 +50,4 @@ runcmd:
   - chmod +x /usr/local/bin/minio
   - systemctl daemon-reload
   - systemctl enable --now minio
+  - "test -e /dev/virtio-ports/org.qemu.guest_agent.0 && systemctl start qemu-guest-agent || true"

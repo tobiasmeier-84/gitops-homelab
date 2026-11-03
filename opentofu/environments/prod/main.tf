@@ -28,7 +28,6 @@ module "enceladus" {
   vm_id          = 201
   name           = "enceladus"
   cpu_cores      = 4
-  cpu_type       = "x86-64-v2-AES"
   memory_mb      = 32768
   image_file_id  = proxmox_download_file.debian_ceres.id
   ssh_public_key = var.vm_ssh_public_key
@@ -137,7 +136,6 @@ module "mimas" {
   vm_id          = 202
   name           = "mimas"
   cpu_cores      = 4
-  cpu_type       = "x86-64-v2-AES"
   memory_mb      = 32768
   image_file_id  = proxmox_download_file.debian_eros.id
   ssh_public_key = var.vm_ssh_public_key
@@ -214,7 +212,6 @@ module "rhea" {
   vm_id          = 203
   name           = "rhea"
   cpu_cores      = 4
-  cpu_type       = "x86-64-v2-AES"
   memory_mb      = 32768
   image_file_id  = proxmox_download_file.debian_pallas.id
   ssh_public_key = var.vm_ssh_public_key

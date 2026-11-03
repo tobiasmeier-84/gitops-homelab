@@ -1,6 +1,6 @@
 # ADR-0052: RKE2 node VMs use the x86-64-v2-AES CPU type
 
-**Status:** Accepted - implemented 2026-11-02 for the three RKE2 nodes; phase 2 (other VMs) open
+**Status:** Accepted - implemented for all VMs (RKE2 nodes 2026-11-02, the rest 2026-11-03)
 
 ## Context
 The `proxmox-vm` module never set a CPU type, so the provider default
@@ -14,12 +14,10 @@ The physical hosts (`ceres`, `eros`, `pallas`) support far more than the
 guests were allowed to see.
 
 ## Decision
-- The three RKE2 node VMs use CPU type `x86-64-v2-AES`, the baseline that
-  Proxmox and the bpg/proxmox provider documentation recommend.
-- `proxmox-vm` gets a variable `cpu_type` (default `qemu64`, i.e. the
-  previous behaviour, so the HAProxy trio, `deimos`, the DNS pair and
-  `iapetus` are unchanged). `environments/prod` passes `x86-64-v2-AES`
-  for the three nodes.
+- All VMs use CPU type `x86-64-v2-AES`, the baseline that Proxmox and the
+  bpg/proxmox provider documentation recommend.
+- `proxmox-vm` gets a variable `cpu_type` with default `x86-64-v2-AES`;
+  `iapetus` (own resource in `bootstrap-minio`) sets the type explicitly.
 - Not `host`: it exposes the exact host CPU model and would block moving
   a VM between hosts with different CPUs, with no benefit for these
   workloads.
@@ -66,10 +64,10 @@ identical i7-7700 machines, so the baseline is safe everywhere. The guest model
 name string still reads "QEMU Virtual CPU version 2.5+" (unchanged by the CPU type);
 the flags are what count.
 
-## Phase 2 (open)
-The HAProxy trio, `deimos`, the DNS pair and `iapetus` still run `qemu64`. Change
-them the same way, one at a time (`qm set` plus full stop/start, no drain needed).
-`deimos` (Pomerium is the SSH path in) and `iapetus` (MinIO holds the OpenTofu
-state) in a planned window. Afterwards flip the module default of `cpu_type` to
-`x86-64-v2-AES`, drop the explicit values in `environments/prod`, and update this
-ADR. Until then the module default stays `qemu64` so that code and reality agree.
+## Phase 2 (done 2026-11-03)
+The remaining VMs were changed the same way, one at a time, with a health check
+before and after each: the DNS pair (`titania`, `oberon`), the HAProxy trio
+(`proteus`, `nereid`, then the VRRP master `triton`), `deimos` and `iapetus`. No
+drain was needed. Afterwards the module default was flipped to `x86-64-v2-AES`, the
+explicit values in `environments/prod` were dropped and `iapetus` got the type in
+`bootstrap-minio`, so code and reality agree again.

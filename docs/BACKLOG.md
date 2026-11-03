@@ -204,8 +204,8 @@ and needs updating to match — otherwise the docs actively mislead anyone
   `tofu plan -refresh=false`. Fix: a colon-free udev symlink for the disk on pallas
   (in `proxmox-host-config`), then point `scsi7` at it while rhea is stopped; or an
   upstream provider issue.
-- **ADR-0052 phase 2** - HAProxy trio, `deimos`, DNS pair and `iapetus` still run
-  `qemu64`; change one at a time, then flip the module default. See the ADR.
+- [x] **RESOLVED 2026-11-03** - ADR-0052 phase 2: all VMs run `x86-64-v2-AES`, module
+      default flipped, `iapetus` set in `bootstrap-minio`.
 - **Stale `canterbury` storage reference** - `qm` on pallas prints `storage
   'canterbury' does not exist` (zpool is gone). Find and remove the reference
   (`/etc/pve/storage.cfg` or a VM's cloud-init drive).

@@ -11,3 +11,8 @@ users:
       - ${ssh_public_key}
 
 package_update: true
+packages:
+  - qemu-guest-agent
+
+runcmd:
+  - "test -e /dev/virtio-ports/org.qemu.guest_agent.0 && systemctl start qemu-guest-agent || true"

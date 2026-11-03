@@ -60,3 +60,27 @@
     dest: /etc/resolv.conf
     state: link
     force: true
+
+# ---- QEMU guest agent (ADR-0053) -------------------------------------------------
+# The package is harmless without the Proxmox agent option; the channel appears after
+# the VM's next full stop/start with `agent: 1`. The unit is started by udev once the
+# channel exists, so it is only started here when the channel is already there.
+
+- name: Install the QEMU guest agent
+  apt:
+    name: qemu-guest-agent
+    state: present
+  tags: [guest_agent]
+
+- name: Check for the Proxmox guest agent channel
+  stat:
+    path: /dev/virtio-ports/org.qemu.guest_agent.0
+  register: guest_agent_channel
+  tags: [guest_agent]
+
+- name: Start the QEMU guest agent when its channel exists
+  systemd:
+    name: qemu-guest-agent
+    state: started
+  when: guest_agent_channel.stat.exists
+  tags: [guest_agent]

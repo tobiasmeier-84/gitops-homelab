@@ -13,6 +13,7 @@ resource "proxmox_virtual_environment_vm" "iapetus" {
 
   cpu {
     cores = 2
+    type  = "x86-64-v2-AES"
   }
 
   memory {
@@ -55,6 +56,13 @@ resource "proxmox_virtual_environment_vm" "iapetus" {
     user_data_file_id = proxmox_virtual_environment_file.cloud_init.id
   }
 
+  # QEMU guest agent (ADR-0053). Adds the virtio-serial channel, so changing it on a
+  # running VM needs a full stop/start. On create the provider waits for the agent to
+  # answer, which is why cloud-init installs the package (cloud-init.tpl).
+  agent {
+    enabled = true
+  }
+
   operating_system {
     type = "l26"
   }
@@ -68,6 +76,14 @@ resource "proxmox_virtual_environment_file" "cloud_init" {
   source_raw {
     data      = local.cloud_init_config
     file_name = "iapetus-cloud-init.yaml"
+  }
+
+  # The snippet is only read when a VM is created. Proxmox derives the cloud-init
+  # instance id from the user-data, so rewriting the snippet of a live VM would make
+  # cloud-init run its first-boot steps again at the next start (new SSH host keys,
+  # runcmd twice). Existing VMs get changes through Ansible or qm instead.
+  lifecycle {
+    ignore_changes = [source_raw]
   }
 }
 
