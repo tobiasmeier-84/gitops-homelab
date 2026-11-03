@@ -18,7 +18,7 @@ spec:
         workerRunAsGroup: 10001
         schedule: "30 3 * * *"       # daily 03:30 Europe/Zurich
         maxAgeDays: 13               # app maximum is 14 days (privacy by design)
-        dryRun: true                 # first rollout: flip to false after the self-test and one dry run
+        dryRun: false               # first real run on 2026-11-03 after self-test and dry run
   destination:
     server: https://kubernetes.default.svc
     namespace: forscher
