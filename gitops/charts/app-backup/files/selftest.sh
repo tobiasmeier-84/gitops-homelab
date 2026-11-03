@@ -82,15 +82,36 @@ done
 
 # ---- C. isolation ---------------------------------------------------------------------------------
 log "=== C. isolation of this app's credentials ==="
-probe_denied() { # chain label  (a HEAD outside the prefix must be denied, not 'not found')
+probe_denied() { # chain  (reading, writing and deleting outside the app's prefix must be denied)
   chain_setup "$1" || { fail "chain $1: setup"; return; }
-  _err=$("$AWS_PY" "$AWS" s3api head-object --bucket "$C_BUCKET" --key "zz-isolation-probe-$$" --endpoint-url "$C_EP" 2>&1 >/dev/null) && {
-    fail "chain $1: HEAD outside the app prefix succeeded"; return; }
-  case "$_err" in
-    *"(404)"*|*NotFound*|*"Not Found"*) fail "chain $1: HEAD outside the prefix says 'not found' - access is not restricted to the prefix" ;;
-    *"(403)"*|*"(401)"*|*Forbidden*|*AccessDenied*|*Unauthorized*) pass "chain $1: read outside the prefix is denied" ;;
-    *) fail "chain $1: unexpected answer to the HEAD probe: $(echo "$_err" | head -c 200)" ;;
-  esac
+  # Read: S3 answers 404 for a missing key whenever the credential may list the bucket (listing cannot
+  # be limited to a prefix), so a missing key proves nothing. Try an EXISTING object of another app.
+  _listok=no; _fk=""
+  if _top=$("$AWS_PY" "$AWS" s3api list-objects-v2 --bucket "$C_BUCKET" --delimiter / --query 'CommonPrefixes[].Prefix' --output json --endpoint-url "$C_EP" 2>/dev/null); then
+    _listok=yes
+    _fk=$(printf '%s' "$_top" | "$JQ" -r --arg a "${APP_NAME}-" '.[]? | select(startswith($a) | not)' | head -n 1) || _fk=""
+  fi
+  _read=untested
+  if [ -n "$_fk" ]; then
+    for _o in MANIFEST 0001; do
+      if "$AWS_PY" "$AWS" s3api head-object --bucket "$C_BUCKET" --key "${_fk}${_o}" --endpoint-url "$C_EP" >/dev/null 2>/tmp/head.err; then
+        fail "chain $1: an object of another app (${_fk}${_o}) can be READ - access is not restricted to the prefix"; _read=failed; break
+      fi
+      case "$(cat /tmp/head.err)" in
+        *"(403)"*|*"(401)"*|*Forbidden*|*AccessDenied*|*Unauthorized*) pass "chain $1: read of another app's object (${_fk}${_o}) is denied"; _read=ok; break ;;
+      esac
+    done
+  fi
+  if [ "$_read" = untested ]; then
+    _err=$("$AWS_PY" "$AWS" s3api head-object --bucket "$C_BUCKET" --key "zz-isolation-probe-$$" --endpoint-url "$C_EP" 2>&1 >/dev/null) && fail "chain $1: HEAD outside the app prefix succeeded"
+    case "$_err" in
+      *"(403)"*|*"(401)"*|*Forbidden*|*AccessDenied*|*Unauthorized*) pass "chain $1: read outside the prefix is denied" ;;
+      *"(404)"*|*NotFound*|*"Not Found"*)
+        if [ "$_listok" = yes ]; then log "SKIP: chain $1: no object of another app in the bucket to test read isolation (listing is allowed, so 404 proves nothing)"
+        else fail "chain $1: HEAD outside the prefix says 'not found' although listing is denied - unexpected"; fi ;;
+      *) fail "chain $1: unexpected answer to the HEAD probe: $(echo "$_err" | head -c 200)" ;;
+    esac
+  fi
   printf x >/tmp/probe.bin
   if "$AWS_PY" "$AWS" s3api put-object --bucket "$C_BUCKET" --key "zz-isolation-probe-$$" --body /tmp/probe.bin --endpoint-url "$C_EP" >/dev/null 2>&1; then
     fail "chain $1: a WRITE outside the prefix succeeded (the probe object stays behind - delete it by hand)"
