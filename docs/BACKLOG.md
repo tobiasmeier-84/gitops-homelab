@@ -234,6 +234,6 @@ and needs updating to match — otherwise the docs actively mislead anyone
 - Expiry/rotation: Azure client secret and Bitwarden access token expire (1 year) - add a reminder
   and a rotation procedure.
 - App-specific verify hook in the worker (e.g. `PRAGMA integrity_check` on the restored SQLite copy).
-- Restore drill: download+decrypt from both chains done 2026-11-03; still open: restore into the live volume and start the app on it (docs/runbooks/app-backup-restore.md).
+- Restore drill done 2026-11-03 (both chains, isolated app copy). Open: restore over the live volume; make the drill a script or Job (docs/runbooks/app-backup-restore.md).
 - Bitwarden project/machine account are manual - revisit when the provider supports them.
 - Rename `uploadEnabled` in `backup-cronjob` (misleading name) when the baseline is merged.

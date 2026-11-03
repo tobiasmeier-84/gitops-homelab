@@ -2,8 +2,11 @@
 
 **Status: tested on 2026-11-03** with the first real backup (forscher-20261103-115929): both chains
 restored independently (key from the own vault), the two restores were identical and contained
-forscher.db, -wal, -shm and photos/ (5532 KiB). Not yet tested: restoring into the live volume
-(step 4) and the application starting on it. Repeat the drill after changes to the backup scripts. The self-test (`kubectl create job --from=cronjob/<app>-backup-selftest`) proves the
+forscher.db, -wal, -shm and photos/ (5532 KiB). The same day the backup was restored into a separate
+PVC and a network-isolated copy of the app (label `app: forscher-restore-test`, only DNS allowed by
+default-deny, NTFY_URL pointed at nowhere) started on it: /healthz 200, `PRAGMA integrity_check` = ok,
+row counts plausible (see "Repeatable drill" below). Restoring over the LIVE volume (step 4) has not
+been done. Repeat the drill after changes to the backup scripts. The self-test (`kubectl create job --from=cronjob/<app>-backup-selftest`) proves the
 download+decrypt path with throwaway data, not with the real backup.
 
 Backups exist for at most 13 days. Names are `<app>-YYYYMMDD-HHMMSS` (UTC).
@@ -50,3 +53,14 @@ Backups exist for at most 13 days. Names are `<app>-YYYYMMDD-HHMMSS` (UTC).
 
 Note: `tools_setup` installs the tools into a private folder; call them as `$ZSTD`, `$AGE`, `$JQ` after sourcing
 `/scripts/chain-lib.sh` (they are not on PATH).
+
+## Repeatable drill (does not touch production)
+1. PVC `forscher-restore-test` (2Gi, longhorn-general-single-replica) and a restore pod as in step 2, with
+   the PVC mounted at `/restore` and `fsGroup: 10001`; extract with
+   `chain_fetch A <NAME> /work/r.zst && $ZSTD -dc /work/r.zst | tar -xf - -C /restore`.
+2. A copy of the app pod (same image tag, same env, `envFrom forscher-secrets`) with label
+   `app: forscher-restore-test` and `NTFY_URL=http://127.0.0.1:9`. No policy selects that label, so
+   default-deny leaves it DNS only: it cannot push to ntfy or reach OIDC.
+3. `kubectl exec -i ... -- node -` with a script that fetches `/healthz`, runs `PRAGMA integrity_check`
+   via `node:sqlite` and prints row counts per table (counts only, no content).
+4. Delete the test pod and the PVC `forscher-restore-test`.
