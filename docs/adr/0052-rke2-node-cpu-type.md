@@ -1,6 +1,6 @@
 # ADR-0052: RKE2 node VMs use the x86-64-v2-AES CPU type
 
-**Status:** Accepted - rollout in progress (started 2026-11-02)
+**Status:** Accepted - implemented 2026-11-02 for the three RKE2 nodes; phase 2 (other VMs) open
 
 ## Context
 The `proxmox-vm` module never set a CPU type, so the provider default
@@ -30,7 +30,7 @@ guests were allowed to see.
   `tofu plan` shows no change for them; the value in code documents the
   intended state and applies to future rebuilds.
 
-## Rollout procedure (one node at a time: enceladus, mimas, rhea last)
+## Rollout procedure (one node at a time)
 1. Check that the Proxmox hosts report ssse3, sse4_2, popcnt and aes in
    `/proc/cpuinfo`, all nodes are Ready, all Longhorn volumes are healthy
    and no backup prepare/upload is running.
@@ -44,9 +44,32 @@ guests were allowed to see.
 5. Verify in the guest that `/proc/cpuinfo` shows ssse3, sse4_2 and
    popcnt, then continue with the next node.
 
+Special cases (Postgres primary on the node, the single-replica backup
+staging volume on rhea) and the exact commands are in the
+[node-maintenance runbook](../runbooks/node-maintenance.md).
+
 ## Consequences
 - Each node restarts once and its pods move to the other two. etcd keeps
   quorum because only one of the three RKE2 servers is down at a time.
-- `rhea` goes last: it holds Plex and the backup staging volume.
+- Order used on 2026-11-02: enceladus, rhea, mimas. mimas went last because it
+  hosted the Postgres primary and most apps (one planned switchover instead of
+  two); rhea holds Plex, which is offline while rhea is down, and the
+  single-replica backup staging volume.
 - Longhorn replicas, etcd data and the passed-through disks are untouched.
 - Rollback per node: `qm set <vmid> --cpu qemu64` plus a full stop/start.
+
+## Result (2026-11-02)
+All three nodes were changed with `qm set <vmid> --cpu x86-64-v2-AES` plus a
+full stop/start (about 10 minutes per node, Longhorn resync 3-10 minutes).
+The guests now report ssse3, sse4_2, popcnt and aes. The Proxmox hosts are three
+identical i7-7700 machines, so the baseline is safe everywhere. The guest model
+name string still reads "QEMU Virtual CPU version 2.5+" (unchanged by the CPU type);
+the flags are what count.
+
+## Phase 2 (open)
+The HAProxy trio, `deimos`, the DNS pair and `iapetus` still run `qemu64`. Change
+them the same way, one at a time (`qm set` plus full stop/start, no drain needed).
+`deimos` (Pomerium is the SSH path in) and `iapetus` (MinIO holds the OpenTofu
+state) in a planned window. Afterwards flip the module default of `cpu_type` to
+`x86-64-v2-AES`, drop the explicit values in `environments/prod`, and update this
+ADR. Until then the module default stays `qemu64` so that code and reality agree.

@@ -193,3 +193,33 @@ and needs updating to match — otherwise the docs actively mislead anyone
   making any change — a misconfigured SSH auth mechanism on production
   network switches risks losing management access entirely, a more
   severe blast radius than any VM-level mistake.
+
+## Found during the CPU-type rollout (2026-11-02)
+
+- **`tofu plan`/`apply` for `environments/prod` fails at refresh** - the USB media
+  disk of rhea (`scsi7`, `rhea-media.tf`) has a stable name ending in `-0:0`. The
+  bpg provider splits disk specs at the first colon, treats
+  `/dev/disk/by-id/usb-...-0` as a datastore and gets HTTP 501 from the storage
+  API. Probably broken since 2026-10-23; it fails safe. Workaround:
+  `tofu plan -refresh=false`. Fix: a colon-free udev symlink for the disk on pallas
+  (in `proxmox-host-config`), then point `scsi7` at it while rhea is stopped; or an
+  upstream provider issue.
+- **ADR-0052 phase 2** - HAProxy trio, `deimos`, DNS pair and `iapetus` still run
+  `qemu64`; change one at a time, then flip the module default. See the ADR.
+- **Stale `canterbury` storage reference** - `qm` on pallas prints `storage
+  'canterbury' does not exist` (zpool is gone). Find and remove the reference
+  (`/etc/pve/storage.cfg` or a VM's cloud-init drive).
+- **Backup pipeline, naming and robustness** - `uploadEnabled` only switches the
+  prepare job into TEST MODE; it does not stop the upload (a night of the network
+  test was lost to this). Rename it (e.g. `testMode`) or add a real upload
+  suspend. The upload job downloads `bws` from GitHub on every run, which fails
+  when the network is down; bake it into the image or retry.
+- **Network instability on the powerline link cluster <-> `tycho`** - outages
+  also without any backup traffic (e.g. 2026-11-01 21:xx). Real fix is a cable to
+  the new router ([ADR-0051](adr/0051-mikrotik-router-replacement.md)). Until
+  then: upload window starts 01:05 and the upload is capped at 3000 KB/s
+  (`gitops/apps/rocinante-backup/application.yaml`, marked TEMPORARY); at that rate
+  one backup takes about three nights. Revisit both after the cable.
+- **`rocinante-stage` volume has one replica** (on rhea) - draining rhea needs the
+  temporary Longhorn drain policy in the node-maintenance runbook. Acceptable for
+  staging data; revisit if it ever holds the only copy of a backup for long.
