@@ -41,4 +41,4 @@ image: alpine/k8s:1.30.3
 probeOtherVaultUrl: https://kv-solsys-chainb.vault.azure.net
 
 # Where the Kubernetes API answers after service NAT (the RKE2 server nodes). Used by the orchestrator.
-kubeApiCidr: 10.10.10.0/24
+kubeApiCidr: 10.10.40.0/24
