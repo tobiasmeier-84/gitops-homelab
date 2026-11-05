@@ -1,6 +1,6 @@
 # ADR-0053: QEMU guest agent on every VM
 
-**Status:** Accepted - rollout started 2026-11-03
+**Status:** Accepted - complete 2026-11-05 (all 10 VMs answer `qm agent <vmid> ping`)
 
 ## Context
 None of the VMs ran the QEMU guest agent. Without it Proxmox cannot ask a guest
@@ -29,11 +29,14 @@ host key of a rebuilt guest from the Proxmox side during the ADR-0052 rollout.
 2. A full stop/start per VM applies `qm set <vmid> --agent enabled=1`, because the
    virtio-serial channel cannot be hot-plugged. Done one VM at a time with a health
    check before and after, and verified with `qm agent <vmid> ping`.
-3. The three RKE2 nodes get the option as a pending change; it takes effect at their
-   next planned stop/start, following docs/runbooks/node-maintenance.md.
+3. The three RKE2 nodes got the option as a pending change (`qm set <vmid> --agent enabled=1`)
+   and took it over at their planned full stop/start of 2026-11-05, following
+   docs/runbooks/node-maintenance.md; `qm agent 201|202|203 ping` answers.
 
 ## Consequences
-- Another restart per VM; for the RKE2 nodes it is deferred to the next maintenance.
-- `iapetus` has no `ignore_changes = all` guard, so `tofu plan` in `bootstrap-minio`
-  shows a pending change until its live option is set. Do not apply that plan.
+- One more restart per VM; for the RKE2 nodes it was combined with a planned maintenance.
+- `qm shutdown` now asks the guest through the agent instead of falling back to ACPI.
+- `iapetus` has no `ignore_changes = all` guard, so `tofu plan` in `bootstrap-minio` would
+  show a change if its live option and the code ever diverge. Since the live option was set
+  the plan shows no changes (a plan is no proof of a running agent: check with `qm agent`).
 - Rollback per VM: `qm set <vmid> --agent 0` plus a full stop/start.

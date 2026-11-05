@@ -99,8 +99,9 @@ healthy, Nextcloud `status.php` returns 200.
   Never use `--force` or `--disable-eviction`.
 - Right after a restart, `FailedAttachVolume ... engine image ... not deployed on at
   least one of the replicas' nodes` for a few seconds is transient.
-- The VMs run without the guest agent, so `qm shutdown` relies on ACPI. It worked
-  on all three.
+- Since 2026-11-05 all VMs run the guest agent (ADR-0053): `qm shutdown` asks the guest
+  through it, and `qm agent <vmid> ping` shows that the channel is alive after a start.
+  (Until then `qm shutdown` fell back to ACPI; it worked on all three nodes.)
 - `qm` on pallas prints `storage 'canterbury' does not exist`: a stale reference,
   harmless (see BACKLOG).
 - `tofu plan` for `environments/prod` currently fails while refreshing rhea (see
