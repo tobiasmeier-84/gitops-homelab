@@ -237,3 +237,24 @@ and needs updating to match — otherwise the docs actively mislead anyone
 - Restore drill done 2026-11-03 (both chains, isolated app copy). Open: restore over the live volume; make the drill a script or Job (docs/runbooks/app-backup-restore.md).
 - Bitwarden project/machine account are manual - revisit when the provider supports them.
 - Rename `uploadEnabled` in `backup-cronjob` (misleading name) when the baseline is merged.
+
+## OS lifecycle (found 2026-11-05)
+
+- **Debian 12 (bookworm) to Debian 13 (trixie) on all 10 VMs, before 2028-06-30.** All VMs
+  run bookworm 12.15 (kernel 6.1). Regular security support ended 2026-06-10; since July
+  2026 the LTS team provides security updates, until 2028-06-30. Unattended-upgrades keeps
+  working until then (no reboot, no stability risk for the moment), so this is planning, not
+  an emergency. Needs an ADR before work starts. Points to settle:
+  how the VMs get to trixie (in-place `apt full-upgrade` per VM vs. rebuilding from a
+  trixie cloud image; remember the lesson of CLAUDE.md that a changed `user_data`/image
+  can make OpenTofu replace a VM, and that the module has `ignore_changes = all`);
+  an order that starts with the least critical VM (a DNS server, e.g. `oberon`) and ends with
+  the RKE2 nodes one at a time, following docs/runbooks/node-maintenance.md; the kernel
+  change 6.1 to 6.12 against the x86-64-v2-AES CPU type and the Longhorn/RKE2 versions in
+  use; third-party repositories (Pomerium, HAProxy/keepalived sources, MinIO, RKE2) need a
+  trixie-compatible build before their VM moves. Check the Proxmox hosts' own release
+  separately (a different upgrade path).
+- **Pomerium 0.33.3 to 0.34.0 on `deimos`** (apt shows it as upgradable; not a security fix, so
+  unattended-upgrades does not install it). Read the release notes for config or breaking
+  changes first, upgrade `deimos` alone, then test the console/shell through ZTNA (the
+  `allow_websockets` routes), the Nextcloud and Proxmox logins and the policies.
