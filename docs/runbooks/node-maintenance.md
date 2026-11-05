@@ -32,7 +32,7 @@ touches a running VM. Keep the code in `opentofu/` in sync by hand.
 ## 1. Pre-flight (read-only)
 ```bash
 kubectl get nodes -o wide
-kubectl get pods -A --no-headers | grep -v -E "Running|Completed"      # expect nothing
+kubectl get pods -A --no-headers | grep -v -E 'Running|Completed'      # expect nothing
 kubectl -n longhorn-system get volumes.longhorn.io --no-headers \
   -o custom-columns=S:.status.state,R:.status.robustness | sort | uniq -c
 kubectl -n longhorn-system get replicas.longhorn.io --no-headers \
@@ -64,9 +64,9 @@ rhea. With Longhorn's default drain policy the instance-manager budget of rhea t
 never releases and the drain hangs. While the volume is detached (no upload in
 progress), allow it temporarily and put it back afterwards:
 ```bash
-kubectl -n longhorn-system patch settings.longhorn.io node-drain-policy --type=merge -p '{"value":"allow-if-replica-is-stopped"}'
+kubectl -n longhorn-system patch settings.longhorn.io node-drain-policy --type=merge -p '{\"value\":\"allow-if-replica-is-stopped\"}'
 # ... maintenance ...
-kubectl -n longhorn-system patch settings.longhorn.io node-drain-policy --type=merge -p '{"value":"block-if-contains-last-replica"}'
+kubectl -n longhorn-system patch settings.longhorn.io node-drain-policy --type=merge -p '{\"value\":\"block-if-contains-last-replica\"}'
 ```
 Plex (`behemoth`) is offline while rhea is down; its media volume is pinned to rhea.
 
