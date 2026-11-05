@@ -245,9 +245,20 @@ and needs updating to match — otherwise the docs actively mislead anyone
   2026 the LTS team provides security updates, until 2028-06-30. Unattended-upgrades keeps
   working until then (no reboot, no stability risk for the moment), so this is planning, not
   an emergency. Needs an ADR before work starts. Points to settle:
-  how the VMs get to trixie (in-place `apt full-upgrade` per VM vs. rebuilding from a
-  trixie cloud image; remember the lesson of CLAUDE.md that a changed `user_data`/image
-  can make OpenTofu replace a VM, and that the module has `ignore_changes = all`);
+  **Direction (2026-11-05): replace, do not upgrade in place.** Prepare the trixie image and
+  everything else in IaC, stop and rename the old VM in Proxmox, `tofu state rm` the old
+  resource (the module has `ignore_changes = all`, so `tofu apply` never replaces a running
+  VM, and `-replace` would destroy the old disks: no rollback), apply to create the new VM
+  under the same name and IP, run Ansible. Keep the old VM stopped as a rollback until the
+  new one has proven itself, then delete it. The old VM must be OFF before the new one
+  starts (IP, MAC, DNS, keepalived). New SSH host keys are expected (known_hosts, Proxmox
+  SSH CA). Easy (stateless): DNS pair, HAProxy trio, `deimos` (needs its secrets again).
+  Exceptions: `iapetus` holds the MinIO data including the OpenTofu state (data move or a
+  separate data disk first; its stack is `bootstrap-minio`); the RKE2 nodes carry physical
+  disks passed through for Longhorn (`enceladus`, `mimas`, `rhea`; `rhea` also the USB media
+  disk): the new VM gets the same disks, the `longhorn-disk` role must not reformat them,
+  and each node leaves and rejoins etcd and Longhorn, one at a time, following
+  docs/runbooks/node-maintenance.md. Open points:
   an order that starts with the least critical VM (a DNS server, e.g. `oberon`) and ends with
   the RKE2 nodes one at a time, following docs/runbooks/node-maintenance.md; the kernel
   change 6.1 to 6.12 against the x86-64-v2-AES CPU type and the Longhorn/RKE2 versions in
